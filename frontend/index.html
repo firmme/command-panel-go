@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>命令面板</title>
+    <link rel="stylesheet" href="./src/style.css"/>
+</head>
+<body>
+<div id="app">
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="nav-left">
+            <h1 class="nav-title">命令面板</h1>
+        </div>
+        <div class="nav-right">
+            <button class="btn btn-primary" id="btn-add" title="新增命令">+ 新增命令</button>
+            <button class="btn btn-secondary" id="btn-archive-view" title="查看归档命令">归档命令</button>
+            <button class="btn btn-secondary" id="btn-autostart" title="开机自启">自启</button>
+        </div>
+    </nav>
+
+    <!-- Command Form (collapsible) -->
+    <div class="form-panel" id="form-panel" style="display:none;">
+        <div class="form-header">
+            <h3 id="form-title">新增命令</h3>
+            <button class="btn-close" id="btn-close-form">&times;</button>
+        </div>
+        <form id="command-form">
+            <input type="hidden" id="cmd-id"/>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>名称</label>
+                    <input type="text" id="cmd-name" placeholder="可选，为空时自动推断"/>
+                </div>
+                <div class="form-group">
+                    <label>工作目录</label>
+                    <input type="text" id="cmd-cwd" placeholder="可选，默认为程序目录"/>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>命令 <span class="required">*</span></label>
+                <input type="text" id="cmd-command" placeholder="例如: python server.py" required/>
+            </div>
+            <div class="form-group">
+                <label>注释</label>
+                <textarea id="cmd-note" placeholder="可选备注" rows="2"></textarea>
+            </div>
+            <div class="form-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="cmd-autostart"/>
+                    程序启动 5 秒后自动运行
+                </label>
+                <button type="submit" class="btn btn-primary" id="btn-save">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Archive View (hidden by default) -->
+    <div class="archive-panel" id="archive-panel" style="display:none;">
+        <div class="form-header">
+            <h3>归档命令</h3>
+            <button class="btn-close" id="btn-close-archive">&times;</button>
+        </div>
+        <div class="command-list" id="archive-list"></div>
+    </div>
+
+    <!-- Command List -->
+    <div class="command-list" id="command-list"></div>
+
+    <!-- Log Panel -->
+    <div class="log-panel" id="log-panel" style="display:none;">
+        <div class="log-header">
+            <div class="log-title">
+                <span id="log-cmd-name">日志</span>
+                <span class="log-status" id="log-status"></span>
+            </div>
+            <div class="log-actions">
+                <button class="btn btn-small" id="btn-clear-log" title="清空日志">清空</button>
+                <button class="btn btn-small" id="btn-close-log" title="关闭日志">&times;</button>
+            </div>
+        </div>
+        <pre class="log-content" id="log-content"></pre>
+    </div>
+</div>
+<script src="./src/main.js" type="module"></script>
+</body>
+</html>
