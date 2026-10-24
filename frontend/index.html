@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>命令面板</title>
+    <link rel="stylesheet" href="./src/style.css"/>
+</head>
+<body>
+<div id="app">
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="nav-left">
+            <div class="logo-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <h1 class="nav-title">命令面板</h1>
+        </div>
+        <div class="nav-right">
+            <button class="icon-btn" id="btn-sound" title="异常退出音效"></button>
+            <button class="btn btn-ghost" id="btn-autostart" title="开机自启">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1.5v6"/><path d="M4.2 3.6a5.5 5.5 0 1 0 7.6 0"/></svg>
+                <span>自启</span>
+            </button>
+            <button class="btn btn-ghost" id="btn-archive-view" title="查看归档命令">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M3.5 4v8a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4M6.5 7.5h3"/></svg>
+                <span>归档</span>
+            </button>
+            <button class="btn btn-primary" id="btn-add" title="新增命令">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+                <span>新增命令</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Command Form (modal) -->
+    <div class="modal-overlay" id="form-overlay" style="display:none;">
+        <div class="modal" id="form-panel">
+            <div class="form-header">
+                <h3 id="form-title">新增命令</h3>
+                <button class="icon-btn" id="btn-close-form" title="关闭表单">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+                </button>
+            </div>
+            <form id="command-form">
+                <input type="hidden" id="cmd-id"/>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="cmd-name">名称</label>
+                        <input type="text" id="cmd-name" placeholder="可选，为空时自动推断"/>
+                    </div>
+                    <div class="form-group">
+                        <label for="cmd-cwd">工作目录</label>
+                        <input type="text" id="cmd-cwd" placeholder="可选，默认为程序目录"/>
+                    </div>
+                    <div class="form-group form-group-fixed">
+                        <label for="cmd-engine">引擎</label>
+                        <select id="cmd-engine"></select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div class="label-row">
+                        <label for="cmd-command">命令 <span class="required">*</span></label>
+                        <button type="button" class="link-btn" id="btn-pick-exe">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 12.5v-8h4L7 6h7.5v6.5z"/></svg>
+                            <span>选择可执行程序…</span>
+                        </button>
+                    </div>
+                    <input type="text" id="cmd-command" placeholder="例如: python server.py --port 8000" required/>
+                </div>
+                <div class="form-group" id="var-group" style="display:none;">
+                    <label>敏感变量 <span class="form-hint">命令中的 ${名称} 会被替换为输入值，保存在本机</span></label>
+                    <div id="var-container"></div>
+                </div>
+                <div class="form-group">
+                    <label for="cmd-note">注释</label>
+                    <textarea id="cmd-note" placeholder="可选备注" rows="2"></textarea>
+                </div>
+                <div class="form-footer">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="cmd-autostart"/>
+                        程序启动 5 秒后自动运行
+                    </label>
+                    <button type="submit" class="btn btn-primary" id="btn-save">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l3.5 3.5 7-7.5"/></svg>
+                        <span>保存</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Archive View (hidden by default) -->
+    <div class="archive-panel" id="archive-panel" style="display:none;">
+        <div class="form-header">
+            <h3>归档命令</h3>
+            <button class="icon-btn" id="btn-close-archive" title="关闭归档">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
+        </div>
+        <div class="command-list" id="archive-list"></div>
+    </div>
+
+    <!-- Command List -->
+    <div class="command-list" id="command-list"></div>
+
+    <!-- Log Panel -->
+    <div class="log-panel" id="log-panel" style="display:none;">
+        <div class="log-header">
+            <div class="log-title">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11v9h-11z"/><path d="M4.5 6l2 2-2 2M8 10h3"/></svg>
+                <span id="log-cmd-name">日志</span>
+                <span class="log-status" id="log-status"></span>
+            </div>
+            <div class="log-actions">
+                <button class="btn btn-ghost btn-small" id="btn-clear-log" title="清空日志">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M6.5 4.5v-1h3v1M4.5 4.5l.5 9h6l.5-9M6.5 7.5v4M9.5 7.5v4"/></svg>
+                    <span>清空</span>
+                </button>
+                <button class="icon-btn" id="btn-close-log" title="关闭日志">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+                </button>
+            </div>
+        </div>
+        <pre class="log-content" id="log-content"></pre>
+    </div>
+</div>
+<script src="./src/main.js" type="module"></script>
+</body>
+</html>
