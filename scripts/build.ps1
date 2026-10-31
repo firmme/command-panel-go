@@ -8,13 +8,8 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $resourcePath = Join-Path $projectRoot "command-panel_windows_resources.syso"
 Push-Location -LiteralPath $projectRoot
 try {
-    # Uses Wails' native generator without the CLI's older source parser.
-    go run -tags bindings .
+    go run github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0 generate bindings -names
     if ($LASTEXITCODE -ne 0) { throw "Binding generation failed." }
-    # Wails emits whitespace-only lines in models.ts; keep generated diffs clean.
-    $modelsPath = Join-Path $projectRoot "frontend/wailsjs/go/models.ts"
-    $modelLines = [System.IO.File]::ReadAllLines($modelsPath) | ForEach-Object { $_.TrimEnd() }
-    [System.IO.File]::WriteAllText($modelsPath, ($modelLines -join "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
 
     if (-not (Test-Path -LiteralPath "frontend/node_modules")) {
         npm.cmd --prefix frontend ci

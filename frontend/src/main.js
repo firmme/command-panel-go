@@ -1,6 +1,6 @@
 import './style.css';
-import {GetCommands, GetArchivedCommands, DeleteCommand, DuplicateCommand, StartCommand, StopCommand, ArchiveCommand, RestoreCommand, ReorderCommands, GetRunStates, InstallAutostart, UninstallAutostart, IsAutostartInstalled, HideWindow, OpenURL, PickExecutable} from '../wailsjs/go/main/App.js';
-import {EventsOn} from '../wailsjs/runtime/runtime.js';
+import {GetCommands, GetArchivedCommands, DeleteCommand, DuplicateCommand, StartCommand, StopCommand, ArchiveCommand, RestoreCommand, ReorderCommands, GetRunStates, InstallAutostart, UninstallAutostart, IsAutostartInstalled, HideWindow, OpenURL, PickExecutable} from '../bindings/command-panel/app.js';
+import {Events} from '@wailsio/runtime';
 import {escapeHtml, executableCommand} from './format.js';
 import {createCommandForm} from './form.js';
 import {createCardRenderer} from './cards.js';
@@ -151,16 +151,16 @@ function requestRefresh(full = false) { return refreshQueue.request(full); }
 
 // Setup Wails event listeners
 function setupWailsEvents() {
-    EventsOn('commands-updated', () => {
+    Events.On('commands-updated', () => {
         if (isSuspended) return;
         requestRefresh(true);
     });
     // Pushed by backend when a process exits - update states without full re-render
-    EventsOn('run-state-changed', (id, exitCode, stopped) => {
+    Events.On('run-state-changed', ({data: [id, exitCode, stopped]}) => {
         if (exitCode !== 0 && !stopped) playAlertSound();
         if (!isSuspended) requestRefresh();
     });
-    EventsOn('operation-error', error => showToast(error, true));
+    Events.On('operation-error', ({data}) => showToast(data, true));
 }
 
 function setupPowerSaving() {

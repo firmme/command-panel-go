@@ -11,7 +11,7 @@ import (
 	"image/png"
 	"time"
 
-	"github.com/getlantern/systray"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 var (
@@ -200,67 +200,25 @@ func rgbaToICO(img *image.RGBA) []byte {
 
 func (a *App) startTray(onShow func(), onQuit func()) {
 	a.trayDone = make(chan struct{})
-
-	systray.Register(func() {
-		var lastIcon []byte
-		var lastTooltip string
-
-		updateTray := func() {
-			icon := a.generateTrayIcon()
-			tooltip := a.buildTooltip()
-
-			if !bytes.Equal(icon, lastIcon) {
-				systray.SetIcon(icon)
-				lastIcon = append(lastIcon[:0], icon...)
-			}
-			if tooltip != lastTooltip {
-				systray.SetTooltip(tooltip)
-				lastTooltip = tooltip
+	tray := a.wails.SystemTray.New()
+	menu := a.wails.NewMenu()
+	menu.Add("打开面板").OnClick(func(*application.Context) { onShow() })
+	menu.AddSeparator()
+	menu.Add("退出程序").OnClick(func(*application.Context) { onQuit() })
+	tray.SetMenu(menu)
+	tray.OnClick(onShow)
+	update := func() { tray.SetIcon(a.generateTrayIcon()); tray.SetTooltip(a.buildTooltip()) }
+	update()
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				update()
+			case <-a.trayDone:
+				return
 			}
 		}
-
-		updateTray()
-
-		mShow := systray.AddMenuItem("打开面板", "显示主窗口")
-		systray.AddSeparator()
-		mQuit := systray.AddMenuItem("退出程序", "退出命令面板")
-
-		go func() {
-			for {
-				select {
-				case <-a.trayDone:
-					return
-				case <-mShow.ClickedCh:
-					if onShow != nil {
-						onShow()
-					}
-				case <-mQuit.ClickedCh:
-					if onQuit != nil {
-						onQuit()
-					}
-
-				}
-			}
-		}()
-
-		go func() {
-			ticker := time.NewTicker(10 * time.Second)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ticker.C:
-					updateTray()
-				case <-a.trayDone:
-					return
-				}
-			}
-		}()
-	}, func() {
-		a.trayStopOnce.Do(func() {
-			close(a.trayDone)
-		})
-	})
+	}()
 }
-
-func stopTray() { systray.Quit() }

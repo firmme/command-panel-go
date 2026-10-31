@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,11 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type App struct {
-	ctx           context.Context
+	wails         *application.App
+	window        *application.WebviewWindow
 	config        *Config
 	manager       *ProcessManager
 	sessionMu     sync.RWMutex
@@ -47,8 +47,7 @@ func NewApp() (*App, error) {
 		sessionExitOK: make(map[string]bool), stop: make(chan struct{})}, nil
 }
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+func (a *App) startup() {
 	// Track commands that exit(0) during this session and push exit events to the frontend
 	a.manager.onExit = func(id string, exitCode int, stopped bool) {
 		if exitCode == 0 {
@@ -56,8 +55,8 @@ func (a *App) startup(ctx context.Context) {
 			a.sessionExitOK[id] = true
 			a.sessionMu.Unlock()
 		}
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "run-state-changed", id, exitCode, stopped)
+		if a.wails != nil {
+			a.wails.Event.Emit("run-state-changed", id, exitCode, stopped)
 		}
 	}
 	// Auto-start commands after 5 seconds
@@ -66,28 +65,28 @@ func (a *App) startup(ctx context.Context) {
 
 // ShowWindow brings the window to front
 func (a *App) ShowWindow() {
-	if a.ctx != nil {
-		runtime.WindowShow(a.ctx)
-		runtime.WindowUnminimise(a.ctx)
+	if a.wails != nil {
+		a.window.Show()
+		a.window.UnMinimise()
 	}
 }
 
 func (a *App) Quit() {
 	if err := a.manager.StopAll(); err != nil {
-		if a.ctx != nil {
-			runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{Type: runtime.ErrorDialog, Title: "退出失败", Message: err.Error()})
+		if a.wails != nil {
+			a.wails.Dialog.Error().SetTitle("退出失败").SetMessage(err.Error()).Show()
 		}
 		return
 	}
-	if a.ctx != nil {
-		runtime.Quit(a.ctx)
+	if a.wails != nil {
+		a.wails.Quit()
 	}
 }
 
 // HideWindow hides the window (minimize to tray) and trims memory
 func (a *App) HideWindow() {
-	if a.ctx != nil {
-		runtime.WindowHide(a.ctx)
+	if a.wails != nil {
+		a.window.Hide()
 		trimWorkingSet()
 	}
 }
@@ -109,8 +108,8 @@ func (a *App) autoStartCommands() {
 	}
 	for _, cmd := range a.config.GetCommands() {
 		if cmd.AutoStart && !a.manager.GetState(cmd.ID).Running {
-			if result := a.StartCommand(cmd.ID); result != "" && a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "operation-error", result)
+			if result := a.StartCommand(cmd.ID); result != "" && a.wails != nil {
+				a.wails.Event.Emit("operation-error", result)
 			}
 			if !a.waitAutoStart(2 * time.Second) {
 				return
@@ -119,12 +118,16 @@ func (a *App) autoStartCommands() {
 	}
 }
 
-func (a *App) shutdown(ctx context.Context) {
+func (a *App) shutdown() {
 	a.stopOnce.Do(func() { close(a.stop) })
 	if err := a.manager.StopAll(); err != nil {
 		fmt.Println("Shutdown:", err)
 	}
-	stopTray()
+	a.trayStopOnce.Do(func() {
+		if a.trayDone != nil {
+			close(a.trayDone)
+		}
+	})
 }
 
 // GetCommands returns non-archived commands
@@ -222,8 +225,8 @@ func (a *App) StartCommand(id string) string {
 	if err := a.manager.Start(cmd.ID, cmd.Name, actual, cmd.Command, cmd.CWD, cmd.Engine, secrets...); err != nil {
 		return err.Error()
 	}
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "run-state-changed", id, 0, false)
+	if a.wails != nil {
+		a.wails.Event.Emit("run-state-changed", id, 0, false)
 	}
 	return ""
 }
@@ -319,11 +322,11 @@ func (a *App) GetRunStates() RunStateSnapshot {
 
 // OpenURL opens an external URL in the system browser (http/https only)
 func (a *App) OpenURL(url string) {
-	if a.ctx == nil {
+	if a.wails == nil {
 		return
 	}
 	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
-		runtime.BrowserOpenURL(a.ctx, url)
+		_ = a.wails.Browser.OpenURL(url)
 	}
 }
 
@@ -335,16 +338,16 @@ type ExecutablePick struct {
 
 // PickExecutable opens a file dialog for choosing an executable program
 func (a *App) PickExecutable() *ExecutablePick {
-	if a.ctx == nil {
+	if a.wails == nil {
 		return nil
 	}
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	path, err := a.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title: "选择可执行程序",
-		Filters: []runtime.FileFilter{
+		Filters: []application.FileFilter{
 			{DisplayName: "可执行文件 (*.exe;*.bat;*.cmd;*.ps1)", Pattern: "*.exe;*.bat;*.cmd;*.ps1"},
 			{DisplayName: "所有文件 (*.*)", Pattern: "*.*"},
 		},
-	})
+	}).PromptForSingleSelection()
 	if err != nil || path == "" {
 		return nil
 	}
@@ -374,8 +377,8 @@ func (a *App) IsAutostartInstalled() bool {
 
 // emitUpdate sends an event to the frontend to refresh data
 func (a *App) emitUpdate() {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "commands-updated")
+	if a.wails != nil {
+		a.wails.Event.Emit("commands-updated")
 	}
 }
 

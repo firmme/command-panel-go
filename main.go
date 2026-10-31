@@ -4,58 +4,32 @@ package main
 
 import (
 	"embed"
-
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
-	app, err := NewApp()
+	service, err := NewApp()
 	if err != nil {
 		showStartupError(err)
 		return
 	}
-
-	// Register the tray on the main thread and let Wails/WebView pump messages.
-	app.startTray(func() {
-		app.ShowWindow()
-	}, func() {
-		app.Quit()
+	app := application.New(application.Options{
+		Name:           "命令面板",
+		Assets:         application.AssetOptions{Handler: application.AssetFileServerFS(assets)},
+		Services:       []application.Service{application.NewService(service)},
+		OnShutdown:     service.shutdown,
+		SingleInstance: &application.SingleInstanceOptions{UniqueID: "command-panel-fd1cf8db-46b4-4d69-a670-afd919f3a32c", OnSecondInstanceLaunch: func(application.SecondInstanceData) { service.ShowWindow() }},
 	})
-
-	err = wails.Run(&options.App{
-		Title:     "命令面板",
-		Width:     1100,
-		Height:    750,
-		MinWidth:  800,
-		MinHeight: 600,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour:  &options.RGBA{R: 30, G: 30, B: 30, A: 255},
-		OnStartup:         app.startup,
-		HideWindowOnClose: true,
-		OnShutdown:        app.shutdown,
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "command-panel-fd1cf8db-46b4-4d69-a670-afd919f3a32c",
-			OnSecondInstanceLaunch: func(options.SecondInstanceData) { app.ShowWindow() },
-		},
-		Bind: []interface{}{
-			app,
-		},
-		Windows: &windows.Options{
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			Theme:                windows.Dark,
-		},
-	})
-
-	if err != nil {
+	service.wails = app
+	service.window = app.Window.NewWithOptions(application.WebviewWindowOptions{Title: "命令面板", Width: 1100, Height: 750, MinWidth: 800, MinHeight: 600, BackgroundColour: application.NewRGBA(30, 30, 30, 255), Windows: application.WindowsWindow{Theme: application.Dark}})
+	service.window.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) { e.Cancel(); service.HideWindow() })
+	service.startTray(service.ShowWindow, service.Quit)
+	service.startup()
+	if err := app.Run(); err != nil {
 		println("Error:", err.Error())
 	}
 }

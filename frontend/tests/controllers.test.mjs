@@ -69,9 +69,8 @@ function logHarness(readLog) {
         querySelectorAll() { return []; },
         createElement: element,
     };
-    globalThis.window = {go: {main: {App: {ReadLog: readLog, ClearLog: async () => ''}}}};
     const errors = [];
-    const panel = createLogPanel({getCommands: () => [], getRunStates: () => ({}), showToast: message => errors.push(message)});
+    const panel = createLogPanel({getCommands: () => [], getRunStates: () => ({}), showToast: message => errors.push(message), readLog, clearLog: async () => ''});
     return {panel, elements, errors};
 }
 

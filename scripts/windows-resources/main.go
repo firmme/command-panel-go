@@ -1,4 +1,4 @@
-//go:build ignore
+//go:build tools
 
 // Generates the Windows resources used by the native release build.
 package main

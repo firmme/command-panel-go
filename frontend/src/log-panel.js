@@ -1,9 +1,9 @@
-import {ReadLog, ClearLog} from '../wailsjs/go/main/App.js';
+import {ReadLog, ClearLog} from '../bindings/command-panel/app.js';
 import {inferName, linkify} from './format.js';
 
 const MAX_DISPLAY_CHARS = 256 * 1024;
 
-export function createLogPanel({getCommands, getRunStates, showToast}) {
+export function createLogPanel({getCommands, getRunStates, showToast, readLog = ReadLog, clearLog = ClearLog}) {
     const panel = document.getElementById('log-panel');
     const content = document.getElementById('log-content');
     const status = document.getElementById('log-status');
@@ -46,7 +46,7 @@ export function createLogPanel({getCommands, getRunStates, showToast}) {
                 const id = currentId;
                 const requestedGeneration = generation;
                 let chunk;
-                try { chunk = await ReadLog(id, offset, version); }
+                try { chunk = await readLog(id, offset, version); }
                 catch (e) {
                     if (requestedGeneration !== generation) continue;
                     showToast('读取日志失败: ' + e, true);
@@ -96,7 +96,7 @@ export function createLogPanel({getCommands, getRunStates, showToast}) {
         const id = currentId;
         if (!id) return;
         try {
-            const error = await ClearLog(id);
+            const error = await clearLog(id);
             if (error) { showToast(error, true); return; }
             if (currentId === id) { reset(); await refresh(); }
         } catch (e) { showToast('清空日志失败: ' + e, true); }

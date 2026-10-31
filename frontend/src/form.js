@@ -1,4 +1,4 @@
-import {GetArchivedCommands, AddCommand, UpdateCommand} from '../wailsjs/go/main/App.js';
+import {GetArchivedCommands, AddCommand, UpdateCommand} from '../bindings/command-panel/app.js';
 
 export function createCommandForm({getCommands, icon, showToast, onSaved}) {
     const commandForm = document.getElementById('command-form');

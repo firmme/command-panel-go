@@ -5,12 +5,12 @@ Windows 本地命令管理桌面应用，用于常驻命令、脚本和 SSH 隧�
 ## 环境与开发
 
 - Windows 10/11、WebView2 Runtime
-- Go 1.23+、Node.js 18+
-- Wails v2.12.0（开发模式使用）
+- Go 1.27.2+、Node.js 18+
+- Wails v3.0.0（构建脚本自动运行绑定生成器）
 
 ```powershell
 npm --prefix frontend ci
-wails dev
+.\scripts\build.ps1
 ```
 
 当前实现仅支持 Windows，使用 Windows Job Object、DPAPI 和系统托盘，不提供 Unix 执行引擎。
@@ -23,9 +23,9 @@ wails dev
 .\scripts\build.ps1
 ```
 
-脚本通过 Wails 的 `bindings` 构建标签生成绑定，再构建前端、嵌入应用图标/版本信息/Windows 清单并编译桌面程序，输出 `build/bin/command-panel.exe`。可用 `-OutputName command-panel-reviewed.exe` 指定其他文件名。
+脚本通过 Wails v3 生成绑定，再构建前端、嵌入应用图标/版本信息/Windows 清单并编译桌面程序，输出 `build/bin/command-panel.exe`。可用 `-OutputName command-panel-reviewed.exe` 指定其他文件名。
 
-这条构建路径避开 Wails CLI v2.12.0 旧源码解析器在较新 Go 工具链上的兼容问题，生成绑定时不会初始化用户数据或托盘。需要 Wails 的安装包/资源打包功能时，可在兼容的 Go 工具链下使用 `wails build`。
+绑定生成不启动应用，也不会初始化用户数据或托盘。
 
 ```powershell
 go test ./...
@@ -78,4 +78,4 @@ npm --prefix frontend test
 - `frontend/src/main.js`：事件、应用状态与轮询协调。
 - `frontend/src/cards.js`、`form.js`、`log-panel.js`：卡片、表单和日志交互。
 - `frontend/src/refresh-queue.js`：合并事件、操作和轮询刷新，避免请求重叠。
-- `frontend/wailsjs/`：自动生成的桥接文件。
+- `frontend/bindings/`：自动生成的桥接文件。
