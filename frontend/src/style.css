@@ -939,3 +939,10 @@ html, body {
         transition: none !important;
     }
 }
+
+.update-modal { max-width: 520px; }
+.update-version { font-family: var(--font-mono); color: var(--accent); font-size: 15px; margin: 16px 0 8px; }
+.update-help { color: var(--text-2); line-height: 1.6; }
+.update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; margin-top: 16px; padding: 12px; background: var(--bg-0); border: 1px solid var(--border-1); border-radius: var(--radius-sm); color: var(--text-2); font: inherit; line-height: 1.6; }
+.update-status { color: var(--text-2); min-height: 20px; margin-top: 12px; }
+.update-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

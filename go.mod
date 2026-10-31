@@ -5,6 +5,7 @@ go 1.27.2
 require (
 	github.com/tc-hib/winres v0.3.1
 	github.com/wailsapp/wails/v3 v3.0.0
+	golang.org/x/mod v0.42.0
 	golang.org/x/sys v0.48.0
 )
 

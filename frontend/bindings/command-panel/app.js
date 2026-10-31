@@ -33,6 +33,16 @@ export function ArchiveCommand(id) {
 }
 
 /**
+ * @param {boolean} manual
+ * @returns {$CancellablePromise<$models.updateInfo | null>}
+ */
+export function CheckForUpdates(manual) {
+    return $Call.ByName("main.App.CheckForUpdates", manual).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType3($result);
+    }));
+}
+
+/**
  * ClearLog clears the log file for a command
  * @param {string} id
  * @returns {$CancellablePromise<string>}
@@ -67,7 +77,7 @@ export function DuplicateCommand(id) {
  */
 export function GetArchivedCommands() {
     return $Call.ByName("main.App.GetArchivedCommands").then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType4($result);
     }));
 }
 
@@ -77,7 +87,7 @@ export function GetArchivedCommands() {
  */
 export function GetCommands() {
     return $Call.ByName("main.App.GetCommands").then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType2($result);
+        return $$createType4($result);
     }));
 }
 
@@ -87,7 +97,7 @@ export function GetCommands() {
  */
 export function GetRunStates() {
     return $Call.ByName("main.App.GetRunStates").then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType3($result);
+        return $$createType5($result);
     }));
 }
 
@@ -100,11 +110,26 @@ export function HideWindow() {
 }
 
 /**
+ * @param {string} version
+ * @returns {$CancellablePromise<void>}
+ */
+export function IgnoreUpdate(version) {
+    return $Call.ByName("main.App.IgnoreUpdate", version);
+}
+
+/**
  * InstallAutostart installs Windows autostart
  * @returns {$CancellablePromise<string>}
  */
 export function InstallAutostart() {
     return $Call.ByName("main.App.InstallAutostart");
+}
+
+/**
+ * @returns {$CancellablePromise<void>}
+ */
+export function InstallUpdate() {
+    return $Call.ByName("main.App.InstallUpdate");
 }
 
 /**
@@ -130,7 +155,7 @@ export function OpenURL(url) {
  */
 export function PickExecutable() {
     return $Call.ByName("main.App.PickExecutable").then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType5($result);
+        return $$createType7($result);
     }));
 }
 
@@ -149,7 +174,7 @@ export function Quit() {
  */
 export function ReadLog(id, offset, version) {
     return $Call.ByName("main.App.ReadLog", id, offset, version).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
+        return $$createType8($result);
     }));
 }
 
@@ -220,8 +245,10 @@ export function UpdateCommand(cmd) {
 // Private type creation functions
 const $$createType0 = $models.Command.createFrom;
 const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = $Create.Array($$createType0);
-const $$createType3 = $models.RunStateSnapshot.createFrom;
-const $$createType4 = $models.ExecutablePick.createFrom;
-const $$createType5 = $Create.Nullable($$createType4);
-const $$createType6 = $models.LogChunk.createFrom;
+const $$createType2 = $models.updateInfo.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $Create.Array($$createType0);
+const $$createType5 = $models.RunStateSnapshot.createFrom;
+const $$createType6 = $models.ExecutablePick.createFrom;
+const $$createType7 = $Create.Nullable($$createType6);
+const $$createType8 = $models.LogChunk.createFrom;

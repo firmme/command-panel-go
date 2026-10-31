@@ -15,6 +15,21 @@ npm --prefix frontend ci
 
 当前实现仅支持 Windows，使用 Windows Job Object、DPAPI 和系统托盘，不提供 Unix 执行引擎。
 
+
+## 版本更新与发布
+
+程序启动后会检查 GitHub 的正式 Release；有新版本时可选择升级、稍后提醒或忽略此版本。顶部“检查更新”可手动检查，包括之前忽略的版本。升级会停止运行中的命令并重启程序；下载文件必须与 GitHub 提供的 SHA-256 摘要一致。忽略设置保存在用户配置目录的 `update-settings.json` 中。
+
+仓库为私有时，需要在本机安装 GitHub CLI 并使用 `gh auth login` 登录有仓库读取权限的账号，或设置 `GH_TOKEN`。公开仓库无需登录。启动时网络故障不会打断使用，手动检查会显示错误。
+
+发布时使用与 Release 标签一致的版本号构建，例如：
+
+```powershell
+.\scripts\build.ps1 -Version 1.2.3 -OutputName command-panel-windows-amd64.exe
+```
+
+创建 `v1.2.3` 正式 Release 并上传该文件（GitHub 生成资产 SHA-256 摘要）。更新器只接受匹配本机架构的 `command-panel-windows-<架构>.exe`；新版本号必须大于当前版本。不支持草稿和预发布。请勿将用户的 `commands.json`、日志或凭据加入 Release。
+
 ## 构建与验证
 
 在项目根目录执行：

@@ -1,6 +1,7 @@
-param([string]$OutputName = "command-panel.exe")
+param([string]$OutputName = "command-panel.exe", [string]$Version = "1.0.0")
 
 $ErrorActionPreference = "Stop"
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be a stable version like 1.2.3." }
 if ([System.IO.Path]::GetFileName($OutputName) -ne $OutputName) {
     throw "OutputName must be a filename."
 }
@@ -23,7 +24,7 @@ try {
 
     New-Item -ItemType Directory -Path "build/bin" -Force | Out-Null
     $outputPath = Join-Path "build/bin" $OutputName
-    go build -tags "desktop,production" -trimpath -ldflags "-H windowsgui -s -w" -o $outputPath .
+    go build -tags "desktop,production" -trimpath -ldflags "-H windowsgui -s -w -X main.appVersion=$Version" -o $outputPath .
     if ($LASTEXITCODE -ne 0) { throw "Desktop build failed." }
     Write-Output "Built: $(Join-Path $projectRoot $outputPath)"
 } finally {

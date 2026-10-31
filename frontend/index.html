@@ -15,6 +15,7 @@
             <h1 class="nav-title">命令面板</h1>
         </div>
         <div class="nav-right">
+            <button class="btn btn-ghost" id="btn-check-update" title="检查更新">检查更新</button>
             <button class="icon-btn" id="btn-sound" title="异常退出音效"></button>
             <button class="btn btn-ghost" id="btn-autostart" title="开机自启">
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1.5v6"/><path d="M4.2 3.6a5.5 5.5 0 1 0 7.6 0"/></svg>
@@ -30,6 +31,21 @@
             </button>
         </div>
     </nav>
+
+    <div class="modal-overlay" id="update-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="update-title">
+        <div class="modal update-modal">
+            <div class="form-header"><h3 id="update-title">发现新版本</h3></div>
+            <p id="update-version" class="update-version"></p>
+            <p class="update-help">升级将关闭程序及正在运行的命令，完成后自动重启。</p>
+            <pre id="update-notes" class="update-notes"></pre>
+            <p id="update-status" class="update-status" aria-live="polite"></p>
+            <div class="update-actions">
+                <button class="btn btn-ghost" id="update-ignore">忽略此版本</button>
+                <button class="btn btn-ghost" id="update-later">稍后提醒</button>
+                <button class="btn btn-primary" id="update-install">升级并重启</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Command Form (modal) -->
     <div class="modal-overlay" id="form-overlay" style="display:none;">

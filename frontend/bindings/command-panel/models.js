@@ -430,6 +430,62 @@ export class RunStateSnapshot {
     }
 }
 
+export class updateInfo {
+    /**
+     * Creates a new updateInfo instance.
+     * @param {Partial<updateInfo>} [$$source = {}] - The source object to create the updateInfo.
+     */
+    constructor($$source = {}) {
+        if (!("currentVersion" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["currentVersion"] = "";
+        }
+        if (!("version" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["version"] = "";
+        }
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("notes" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["notes"] = "";
+        }
+        if (!("ignored" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["ignored"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new updateInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {updateInfo}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new updateInfo(/** @type {Partial<updateInfo>} */($$parsedSource));
+    }
+}
+
 // Private type creation functions
 const $$createType0 = CommandVariable.createFrom;
 const $$createType1 = $Create.Array($$createType0);

@@ -1,5 +1,5 @@
 import './style.css';
-import {GetCommands, GetArchivedCommands, DeleteCommand, DuplicateCommand, StartCommand, StopCommand, ArchiveCommand, RestoreCommand, ReorderCommands, GetRunStates, InstallAutostart, UninstallAutostart, IsAutostartInstalled, HideWindow, OpenURL, PickExecutable} from '../bindings/command-panel/app.js';
+import {GetCommands, GetArchivedCommands, DeleteCommand, DuplicateCommand, StartCommand, StopCommand, ArchiveCommand, RestoreCommand, ReorderCommands, GetRunStates, InstallAutostart, UninstallAutostart, IsAutostartInstalled, HideWindow, OpenURL, PickExecutable, CheckForUpdates, IgnoreUpdate, InstallUpdate} from '../bindings/command-panel/app.js';
 import {Events} from '@wailsio/runtime';
 import {escapeHtml, executableCommand} from './format.js';
 import {createCommandForm} from './form.js';
@@ -115,6 +115,7 @@ async function init() {
     setupWailsEvents();
     setupPowerSaving();
     startPolling();
+    checkForUpdates(false);
 }
 
 // ── 执行引擎 ─────────────────────────────────────
@@ -584,3 +585,36 @@ const {showFormModal, hideFormModal, editCommand, rebuildVarRows, saveCommand, r
 
 // Start the app
 init().catch(e => showToast('初始化失败: ' + e, true));
+
+// Updates are checked at startup, but installation always requires confirmation.
+let availableUpdate = null;
+const updateOverlay = document.getElementById('update-overlay');
+const updateButtons = ['update-ignore', 'update-later', 'update-install'].map(id => document.getElementById(id));
+async function checkForUpdates(manual) {
+    const button = document.getElementById('btn-check-update');
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+        const update = await CheckForUpdates(manual);
+        if (!update?.version) { if (manual) showToast(`当前已是最新版本 (${update.currentVersion})`); return; }
+        availableUpdate = update;
+        document.getElementById('update-version').textContent = `${update.currentVersion} → ${update.version}`;
+        document.getElementById('update-notes').textContent = update.notes || '此版本没有发布说明。';
+        document.getElementById('update-status').textContent = update.ignored ? '此版本之前已被忽略。' : '';
+        updateOverlay.style.display = 'flex';
+        document.getElementById('update-install').focus();
+    } catch (error) { if (manual) showToast(`检查更新失败：${error}`, true); }
+    finally { button.disabled = false; }
+}
+document.getElementById('btn-check-update').addEventListener('click', () => checkForUpdates(true));
+document.getElementById('update-later').addEventListener('click', () => { updateOverlay.style.display = 'none'; });
+document.getElementById('update-ignore').addEventListener('click', async () => {
+    try { await IgnoreUpdate(availableUpdate.version); updateOverlay.style.display = 'none'; }
+    catch (error) { document.getElementById('update-status').textContent = `保存失败：${error}`; }
+});
+document.getElementById('update-install').addEventListener('click', async () => {
+    updateButtons.forEach(button => { button.disabled = true; });
+    document.getElementById('update-status').textContent = '正在下载和校验更新，请稍候…';
+    try { await InstallUpdate(); }
+    catch (error) { document.getElementById('update-status').textContent = `更新失败：${error}`; updateButtons.forEach(button => { button.disabled = false; }); }
+});
