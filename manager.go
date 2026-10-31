@@ -1,12 +1,13 @@
+//go:build windows
+
 package main
 
 import (
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +19,7 @@ type ProcessManager struct {
 	processes map[string]*ProcessInfo
 	logDir    string
 	baseDir   string
+	closed    bool
 	onExit    func(id string, exitCode int, stopped bool) // called when a process exits
 }
 
@@ -34,12 +36,12 @@ type ProcessInfo struct {
 	Running   bool
 	Stopped   bool // true when stopped by the user, not a crash
 	Done      chan struct{}
-	LogFile   *os.File
+	LogFile   *rotatingLog
+	Job       *processJob
 }
 
 func NewProcessManager(baseDir string) *ProcessManager {
 	logDir := filepath.Join(baseDir, "logs")
-	os.MkdirAll(logDir, 0755)
 	return &ProcessManager{
 		processes: make(map[string]*ProcessInfo),
 		logDir:    logDir,
@@ -49,9 +51,25 @@ func NewProcessManager(baseDir string) *ProcessManager {
 
 // Start launches a command. `command` is what actually executes; `displayCommand`
 // (with ${var} placeholders intact) is what gets written to logs and state so
-// secret values never touch disk.
-func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine string) error {
+// child output is redacted before persistence.
+func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine string, secrets ...string) error {
 	pm.mu.Lock()
+	if pm.closed {
+		pm.mu.Unlock()
+		return fmt.Errorf("程序正在退出")
+	}
+	if !validCommandID(id) {
+		pm.mu.Unlock()
+		return fmt.Errorf("invalid command ID")
+	}
+	if engine != "" && engine != "powershell" && engine != "powershell5" && engine != "cmd" {
+		pm.mu.Unlock()
+		return fmt.Errorf("不支持的执行引擎: %s", engine)
+	}
+	if err := os.MkdirAll(pm.logDir, 0700); err != nil {
+		pm.mu.Unlock()
+		return err
+	}
 	if info, exists := pm.processes[id]; exists && info.Running {
 		pm.mu.Unlock()
 		return fmt.Errorf("command %s is already running", id)
@@ -64,7 +82,7 @@ func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine s
 
 	// Open log file
 	logPath := filepath.Join(pm.logDir, id+".log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logFile, err := openLog(logPath, secrets)
 	if err != nil {
 		pm.mu.Unlock()
 		return fmt.Errorf("failed to open log file: %v", err)
@@ -72,10 +90,12 @@ func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine s
 
 	// Write log header
 	now := time.Now().Format("2006-01-02 15:04:05")
-	fmt.Fprintf(logFile, "%s  START - name=%s\n", now, name)
-	fmt.Fprintf(logFile, "%s  CWD - %s\n", now, resolvedCWD)
-	fmt.Fprintf(logFile, "%s  ENGINE - %s\n", now, engineLabel(engine))
-	fmt.Fprintf(logFile, "%s  COMMAND - %s\n", now, displayCommand)
+	if _, err := fmt.Fprintf(logFile, "%s  START - name=%s\n%s  CWD - %s\n%s  ENGINE - %s\n%s  COMMAND - %s\n",
+		now, name, now, resolvedCWD, now, engineLabel(engine), now, displayCommand); err != nil {
+		logFile.Close()
+		pm.mu.Unlock()
+		return fmt.Errorf("failed to write log header: %w", err)
+	}
 
 	// Create command
 	shell, args := shellCommand(engine)
@@ -86,13 +106,34 @@ func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine s
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
-		CreationFlags: 0x00000200, // CREATE_NEW_PROCESS_GROUP
+		CreationFlags: 0x00000200 | 0x00000004, // NEW_PROCESS_GROUP | SUSPENDED
+	}
+	if engine == "cmd" {
+		// cmd.exe does not use the CommandLineToArgvW quoting convention.
+		// /s strips only this outer quote pair and preserves quotes in the script.
+		cmd.SysProcAttr.CmdLine = `cmd.exe /d /s /c "` + command + `"`
 	}
 
-	if err := cmd.Start(); err != nil {
+	job, err := newProcessJob()
+	if err != nil {
 		logFile.Close()
 		pm.mu.Unlock()
-		return fmt.Errorf("failed to start command: %v", err)
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		job.close()
+		logFile.Close()
+		pm.mu.Unlock()
+		return fmt.Errorf("failed to start command: %w", err)
+	}
+	if err := job.assignAndResume(uint32(cmd.Process.Pid)); err != nil {
+		job.terminate()
+		cmd.Process.Kill()
+		cmd.Wait()
+		job.close()
+		logFile.Close()
+		pm.mu.Unlock()
+		return fmt.Errorf("failed to track process tree: %w", err)
 	}
 
 	done := make(chan struct{})
@@ -107,6 +148,7 @@ func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine s
 		Running:   true,
 		Done:      done,
 		LogFile:   logFile,
+		Job:       job,
 	}
 
 	pm.processes[id] = info
@@ -115,27 +157,34 @@ func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine s
 	// Wait for process in background
 	go func() {
 		err := cmd.Wait()
-		pm.mu.Lock()
-		info.Running = false
-		info.EndTime = time.Now()
+		jobErr := job.wait()
+		job.close()
+		exitCode := 0
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				info.ExitCode = exitErr.ExitCode()
+				exitCode = exitErr.ExitCode()
 			} else {
-				info.ExitCode = -1
+				exitCode = -1
 			}
 		}
-		exitCode, stopped := info.ExitCode, info.Stopped
+		if jobErr != nil {
+			exitCode = -1
+		}
+		exitNow := time.Now().Format("2006-01-02 15:04:05")
+		_, writeErr := fmt.Fprintf(logFile, "%s  EXIT code=%d - pid=%d\n", exitNow, exitCode, info.PID)
+		closeErr := logFile.Close()
+		if writeErr != nil || closeErr != nil {
+			exitCode = -1
+		}
+		pm.mu.Lock()
+		info.Running, info.EndTime, info.ExitCode = false, time.Now(), exitCode
+		stopped := info.Stopped
+		close(done)
 		pm.mu.Unlock()
-
 		if pm.onExit != nil {
 			pm.onExit(id, exitCode, stopped)
 		}
 
-		exitNow := time.Now().Format("2006-01-02 15:04:05")
-		fmt.Fprintf(logFile, "%s  EXIT code=%d - pid=%d\n", exitNow, exitCode, info.PID)
-		logFile.Close()
-		close(done)
 	}()
 
 	return nil
@@ -143,53 +192,83 @@ func (pm *ProcessManager) Start(id, name, command, displayCommand, cwd, engine s
 
 func (pm *ProcessManager) Stop(id string) error {
 	pm.mu.Lock()
-	info, exists := pm.processes[id]
-	if !exists || !info.Running {
+	info := pm.processes[id]
+	if info == nil || !info.Running {
 		pm.mu.Unlock()
 		return nil
 	}
 	info.Stopped = true
 	pm.mu.Unlock()
-
-	if runtime.GOOS == "windows" {
-		// Use taskkill to kill process tree on Windows (hidden, no console flash)
-		killCmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", info.PID), "/T", "/F")
-		killCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		killCmd.Run()
-	} else {
-		// Kill process group on Unix
-		if info.Cmd.Process != nil {
-			info.Cmd.Process.Signal(syscall.SIGTERM)
+	if err := info.Job.terminate(); err != nil {
+		pm.mu.Lock()
+		running := info.Running
+		if running {
+			info.Stopped = false
+		}
+		pm.mu.Unlock()
+		if running {
+			return fmt.Errorf("终止进程树失败: %w", err)
 		}
 	}
-
-	// Wait for process to exit with timeout
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
 	select {
 	case <-info.Done:
-	case <-time.After(5 * time.Second):
-		pm.mu.RLock()
-		if info.Running {
-			info.Cmd.Process.Kill()
-		}
-		pm.mu.RUnlock()
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("停止超时，进程尚未确认退出: %s", id)
 	}
-
-	return nil
 }
 
-func (pm *ProcessManager) StopAll() {
-	pm.mu.RLock()
+func (pm *ProcessManager) StopAll() error {
+	pm.mu.Lock()
+	pm.closed = true
 	ids := make([]string, 0)
 	for id, info := range pm.processes {
 		if info.Running {
 			ids = append(ids, id)
 		}
 	}
-	pm.mu.RUnlock()
-
+	pm.mu.Unlock()
+	results := make(chan error, len(ids))
 	for _, id := range ids {
-		pm.Stop(id)
+		go func(id string) { results <- pm.Stop(id) }(id)
 	}
+	var errs []error
+	for range ids {
+		if err := <-results; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	err := errors.Join(errs...)
+	if err != nil {
+		pm.mu.Lock()
+		pm.closed = false
+		pm.mu.Unlock()
+	}
+	return err
+}
+
+func (pm *ProcessManager) Remove(id string) error {
+	if !validCommandID(id) {
+		return fmt.Errorf("invalid command ID")
+	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if info := pm.processes[id]; info != nil && info.Running {
+		return fmt.Errorf("command is running")
+	}
+	for i := 0; i <= logBackups; i++ {
+		path := filepath.Join(pm.logDir, id+".log")
+		if i > 0 {
+			path = fmt.Sprintf("%s.%d", path, i)
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	delete(pm.processes, id)
+	return nil
 }
 
 func (pm *ProcessManager) logFileInfo(id string) (string, int64) {
@@ -258,16 +337,10 @@ func (pm *ProcessManager) GetAllStates() map[string]*RunState {
 	return states
 }
 
-func (pm *ProcessManager) GetLog(id string) string {
-	logPath := filepath.Join(pm.logDir, id+".log")
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
 func (pm *ProcessManager) ClearLog(id string) error {
+	if !validCommandID(id) {
+		return fmt.Errorf("invalid command ID")
+	}
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	info, exists := pm.processes[id]
@@ -275,85 +348,13 @@ func (pm *ProcessManager) ClearLog(id string) error {
 		return fmt.Errorf("cannot clear log while command is running")
 	}
 
-	logPath := filepath.Join(pm.logDir, id+".log")
-	return os.WriteFile(logPath, []byte{}, 0644)
-}
-
-func (pm *ProcessManager) GetLogTail(id string, lines int) string {
-	if lines <= 0 {
-		return ""
+	if info != nil && info.LogFile != nil {
+		info.LogFile.mu.Lock()
+		defer info.LogFile.mu.Unlock()
+		info.LogFile.revision++
 	}
 	logPath := filepath.Join(pm.logDir, id+".log")
-	file, err := os.Open(logPath)
-	if err != nil {
-		return ""
-	}
-	defer file.Close()
-
-	// Read last N lines efficiently
-	const chunkSize = 4096
-	stat, err := file.Stat()
-	if err != nil {
-		return ""
-	}
-	fileSize := stat.Size()
-	if fileSize == 0 {
-		return ""
-	}
-
-	var chunks [][]byte
-	totalSize := 0
-	offset := fileSize
-	lineCount := 0
-	lastByte := []byte{0}
-	if _, err := file.ReadAt(lastByte, fileSize-1); err == nil && lastByte[0] == '\n' {
-		lineCount = -1 // A trailing newline terminates a line; it is not an extra line.
-	}
-
-	for offset > 0 && lineCount < lines {
-		readSize := int64(chunkSize)
-		if offset < readSize {
-			readSize = offset
-		}
-		offset -= readSize
-
-		buf := make([]byte, readSize)
-		n, err := file.ReadAt(buf, offset)
-		if err != nil && err != io.EOF {
-			return ""
-		}
-		buf = buf[:n]
-		chunks = append(chunks, buf)
-		totalSize += n
-
-		for _, b := range buf {
-			if b == '\n' {
-				lineCount++
-			}
-		}
-	}
-
-	// Find the start of the last N lines
-	content := make([]byte, 0, totalSize)
-	for i := len(chunks) - 1; i >= 0; i-- {
-		content = append(content, chunks[i]...)
-	}
-	result := strings.TrimSuffix(string(content), "\n")
-	allLines := strings.Split(result, "\n")
-	if len(allLines) > lines {
-		allLines = allLines[len(allLines)-lines:]
-	}
-	return strings.Join(allLines, "\n")
-}
-
-func (pm *ProcessManager) GetProcessInfo(id string) (string, int, string) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	info, exists := pm.processes[id]
-	if !exists {
-		return "", 0, ""
-	}
-	return info.Name, info.PID, info.Command
+	return os.WriteFile(logPath, []byte{}, 0600)
 }
 
 // ── 执行引擎 ─────────────────────────────────────
@@ -432,34 +433,18 @@ func parsePSVersionDir(dir string) ([3]int, bool) {
 
 // shellCommand maps an engine name to the executable + base arguments.
 func shellCommand(engine string) (string, []string) {
-	if runtime.GOOS == "windows" {
-		switch engine {
-		case "cmd":
-			return "cmd", []string{"/c"}
-		case "powershell5":
-			return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command"}
-		default: // "powershell" / "": newest available
-			return resolvePowerShell(), []string{"-NoProfile", "-NonInteractive", "-Command"}
-		}
-	}
 	switch engine {
-	case "bash":
-		return "bash", []string{"-c"}
-	case "zsh":
-		return "zsh", []string{"-c"}
+	case "cmd":
+		return "cmd", []string{"/d", "/s", "/c"}
+	case "powershell5":
+		return "powershell", []string{"-NoProfile", "-NonInteractive", "-Command"}
 	default:
-		return "sh", []string{"-c"}
+		return resolvePowerShell(), []string{"-NoProfile", "-NonInteractive", "-Command"}
 	}
 }
 
 // engineLabel is what gets written to the log header
 func engineLabel(engine string) string {
-	if runtime.GOOS != "windows" {
-		if engine == "" {
-			return "sh"
-		}
-		return engine
-	}
 	switch engine {
 	case "cmd":
 		return "cmd"
@@ -468,10 +453,4 @@ func engineLabel(engine string) string {
 	default:
 		return "PowerShell (auto: " + resolvePowerShell() + ")"
 	}
-}
-
-// TailLog returns a reader that follows the log file for real-time updates
-func (pm *ProcessManager) TailLog(id string) (io.ReadCloser, error) {
-	logPath := filepath.Join(pm.logDir, id+".log")
-	return os.Open(logPath)
 }

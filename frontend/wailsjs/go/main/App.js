@@ -26,28 +26,8 @@ export function GetArchivedCommands() {
   return window['go']['main']['App']['GetArchivedCommands']();
 }
 
-export function GetBaseDir() {
-  return window['go']['main']['App']['GetBaseDir']();
-}
-
-export function GetCommand(arg1) {
-  return window['go']['main']['App']['GetCommand'](arg1);
-}
-
 export function GetCommands() {
   return window['go']['main']['App']['GetCommands']();
-}
-
-export function GetLog(arg1) {
-  return window['go']['main']['App']['GetLog'](arg1);
-}
-
-export function GetPlatform() {
-  return window['go']['main']['App']['GetPlatform']();
-}
-
-export function GetRunState(arg1) {
-  return window['go']['main']['App']['GetRunState'](arg1);
 }
 
 export function GetRunStates() {
@@ -76,6 +56,10 @@ export function PickExecutable() {
 
 export function Quit() {
   return window['go']['main']['App']['Quit']();
+}
+
+export function ReadLog(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ReadLog'](arg1, arg2, arg3);
 }
 
 export function ReorderCommands(arg1) {

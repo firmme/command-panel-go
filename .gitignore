@@ -66,3 +66,8 @@ previews/
 !.env.template
 sdkconfig.old
 .DS_Store
+
+# Runtime commands and secrets are local user data.
+/commands.json
+
+/command-panel_windows_resources.syso

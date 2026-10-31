@@ -14,19 +14,9 @@ export function DuplicateCommand(arg1:string):Promise<main.Command>;
 
 export function GetArchivedCommands():Promise<Array<main.Command>>;
 
-export function GetBaseDir():Promise<string>;
-
-export function GetCommand(arg1:string):Promise<main.Command>;
-
 export function GetCommands():Promise<Array<main.Command>>;
 
-export function GetLog(arg1:string):Promise<string>;
-
-export function GetPlatform():Promise<string>;
-
-export function GetRunState(arg1:string):Promise<main.RunState>;
-
-export function GetRunStates():Promise<Record<string, main.RunState>>;
+export function GetRunStates():Promise<main.RunStateSnapshot>;
 
 export function HideWindow():Promise<void>;
 
@@ -39,6 +29,8 @@ export function OpenURL(arg1:string):Promise<void>;
 export function PickExecutable():Promise<main.ExecutablePick>;
 
 export function Quit():Promise<void>;
+
+export function ReadLog(arg1:string,arg2:number,arg3:string):Promise<main.LogChunk>;
 
 export function ReorderCommands(arg1:Array<string>):Promise<void>;
 

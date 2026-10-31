@@ -1,16 +1,15 @@
+//go:build windows
+
 package main
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	"strings"
 )
 
 func getStartupDir() string {
-	if runtime.GOOS != "windows" {
-		return ""
-	}
 	appData := os.Getenv("APPDATA")
 	return filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
 }
@@ -19,9 +18,10 @@ func getAutostartPath() string {
 	return filepath.Join(getStartupDir(), "CommandPanelStartup.vbs")
 }
 
-func installAutostart(baseDir string) error {
-	if runtime.GOOS != "windows" {
-		return fmt.Errorf("autostart is only supported on Windows")
+func installAutostart() error {
+	executable, err := os.Executable()
+	if err != nil {
+		return err
 	}
 
 	startupDir := getStartupDir()
@@ -30,9 +30,7 @@ func installAutostart(baseDir string) error {
 	}
 
 	// Create VBS script that launches the app hidden
-	vbsContent := fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "cmd /c cd /d ""%s"" && command-panel.exe", 0, False
-`, baseDir)
+	vbsContent := startupScript(executable)
 
 	autostartPath := getAutostartPath()
 	if err := os.WriteFile(autostartPath, []byte(vbsContent), 0644); err != nil {
@@ -43,9 +41,6 @@ WshShell.Run "cmd /c cd /d ""%s"" && command-panel.exe", 0, False
 }
 
 func uninstallAutostart() error {
-	if runtime.GOOS != "windows" {
-		return fmt.Errorf("autostart is only supported on Windows")
-	}
 
 	autostartPath := getAutostartPath()
 	if _, err := os.Stat(autostartPath); os.IsNotExist(err) {
@@ -60,9 +55,12 @@ func uninstallAutostart() error {
 }
 
 func isAutostartInstalled() bool {
-	if runtime.GOOS != "windows" {
-		return false
-	}
 	_, err := os.Stat(getAutostartPath())
 	return err == nil
+}
+
+// Chr(34) quotes the executable without invoking cmd or expanding shell variables.
+func startupScript(executable string) string {
+	escaped := strings.ReplaceAll(executable, `"`, `""`)
+	return fmt.Sprintf("Set WshShell = CreateObject(\"WScript.Shell\")\r\nWshShell.Run Chr(34) & \"%s\" & Chr(34), 0, False\r\n", escaped)
 }

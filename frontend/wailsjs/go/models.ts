@@ -1,17 +1,19 @@
 export namespace main {
-	
+
 	export class CommandVariable {
 	    name: string;
-	    value: string;
-	
+	    value?: string;
+	    protectedValue?: string;
+
 	    static createFrom(source: any = {}) {
 	        return new CommandVariable(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.value = source["value"];
+	        this.protectedValue = source["protectedValue"];
 	    }
 	}
 	export class Command {
@@ -30,11 +32,11 @@ export namespace main {
 	    createdAt: any;
 	    // Go type: time
 	    updatedAt: any;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Command(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -51,7 +53,7 @@ export namespace main {
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -70,19 +72,37 @@ export namespace main {
 		    return a;
 		}
 	}
-	
+
 	export class ExecutablePick {
 	    path: string;
 	    dir: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ExecutablePick(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
 	        this.dir = source["dir"];
+	    }
+	}
+	export class LogChunk {
+	    text: string;
+	    offset: number;
+	    version: string;
+	    reset: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new LogChunk(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.offset = source["offset"];
+	        this.version = source["version"];
+	        this.reset = source["reset"];
 	    }
 	}
 	export class ManagedCommand {
@@ -90,11 +110,11 @@ export namespace main {
 	    command: string;
 	    cwd: string;
 	    name: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ManagedCommand(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -116,11 +136,11 @@ export namespace main {
 	    duration: string;
 	    logPath: string;
 	    logSize: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new RunState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cmd = this.convertValues(source["cmd"], ManagedCommand);
@@ -134,7 +154,37 @@ export namespace main {
 	        this.logPath = source["logPath"];
 	        this.logSize = source["logSize"];
 	    }
-	
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class RunStateSnapshot {
+	    states: Record<string, RunState>;
+
+	    static createFrom(source: any = {}) {
+	        return new RunStateSnapshot(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.states = this.convertValues(source["states"], RunState, true);
+	    }
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;

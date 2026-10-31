@@ -1,16 +1,22 @@
+//go:build windows
+
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 )
 
 func TestConfigSnapshotsAndReorder(t *testing.T) {
 	cfg := NewConfig(t.TempDir())
-	first := cfg.AddCommand(Command{Name: "first", Variables: []CommandVariable{{Name: "key", Value: "keep"}}})
-	second := cfg.AddCommand(Command{Name: "second"})
+	first, err := cfg.AddCommand(Command{Name: "first", Variables: []CommandVariable{{Name: "key", Value: "keep"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cfg.AddCommand(Command{Name: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	all := cfg.GetAllCommands()
 	all[1].Name = "changed"
 	all[1].Variables[0].Value = "changed"
@@ -19,28 +25,12 @@ func TestConfigSnapshotsAndReorder(t *testing.T) {
 	if saved := cfg.GetCommand(first.ID); saved.Name != "first" || saved.Variables[0].Value != "keep" {
 		t.Fatalf("returned data mutated config: %+v", saved)
 	}
-	cfg.ReorderCommands([]string{first.ID, first.ID, "missing", second.ID})
+	if err := cfg.ReorderCommands([]string{first.ID, first.ID, "missing", second.ID}); err != nil {
+		t.Fatal(err)
+	}
 	ordered := cfg.GetAllCommands()
 	if len(ordered) != 2 || ordered[0].ID != first.ID || ordered[1].ID != second.ID {
 		t.Fatalf("reorder duplicated or lost commands: %+v", ordered)
-	}
-}
-
-func TestLogTailHandlesTrailingNewline(t *testing.T) {
-	pm := NewProcessManager(t.TempDir())
-	for _, value := range []string{"one\ntwo\nthree\n", "one\ntwo\nthree"} {
-		if err := os.WriteFile(filepath.Join(pm.logDir, "test.log"), []byte(value), 0644); err != nil {
-			t.Fatal(err)
-		}
-		if tail := pm.GetLogTail("test", 1); tail != "three" {
-			t.Fatalf("tail = %q", tail)
-		}
-		if tail := pm.GetLogTail("test", 2); tail != "two\nthree" {
-			t.Fatalf("tail = %q", tail)
-		}
-	}
-	if tail := pm.GetLogTail("test", -1); tail != "" {
-		t.Fatalf("negative tail = %q", tail)
 	}
 }
 

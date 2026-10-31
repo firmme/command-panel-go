@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -226,6 +228,8 @@ func (a *App) startTray(onShow func(), onQuit func()) {
 		go func() {
 			for {
 				select {
+				case <-a.trayDone:
+					return
 				case <-mShow.ClickedCh:
 					if onShow != nil {
 						onShow()
@@ -234,8 +238,7 @@ func (a *App) startTray(onShow func(), onQuit func()) {
 					if onQuit != nil {
 						onQuit()
 					}
-					systray.Quit()
-					return
+
 				}
 			}
 		}()
@@ -259,3 +262,5 @@ func (a *App) startTray(onShow func(), onQuit func()) {
 		})
 	})
 }
+
+func stopTray() { systray.Quit() }

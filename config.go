@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -15,31 +17,38 @@ import (
 const configFile = "commands.json"
 
 type Config struct {
-	mu       sync.RWMutex
-	commands []Command
-	filePath string
+	mu           sync.RWMutex
+	commands     []Command
+	filePath     string
+	loadErr      error
+	needsRewrite bool
 }
 
 func NewConfig(baseDir string) *Config {
 	cfg := &Config{
 		filePath: filepath.Join(baseDir, configFile),
 	}
-	cfg.load()
+	cfg.loadErr = cfg.load()
+	if cfg.loadErr == nil && cfg.needsRewrite {
+		cfg.loadErr = cfg.save()
+	}
 	return cfg
 }
 
-func (c *Config) load() {
+func (c *Config) load() error {
 	data, err := os.ReadFile(c.filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.commands = []Command{}
-			return
+			return nil
 		}
-		fmt.Printf("Error reading config: %v\n", err)
-		c.commands = []Command{}
-		return
+		return fmt.Errorf("读取配置失败: %w", err)
 	}
 
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil || object == nil {
+		return fmt.Errorf("配置必须为 JSON 对象，已保留原文件: %s", c.filePath)
+	}
 	// Try new format first
 	var store CommandStore
 	if err := json.Unmarshal(data, &store); err == nil && store.Commands != nil {
@@ -50,14 +59,43 @@ func (c *Config) load() {
 			return c.commands[i].Order < c.commands[j].Order
 		})
 		c.renumberLocked()
-		return
+		seen := make(map[string]bool)
+		migrate := false
+		for _, cmd := range c.commands {
+			if !validCommandID(cmd.ID) || seen[cmd.ID] {
+				return fmt.Errorf("配置包含无效或重复的命令 ID")
+			}
+			seen[cmd.ID] = true
+			for _, v := range cmd.Variables {
+				if v.Value != "" && v.ProtectedValue == "" {
+					migrate = true
+				}
+			}
+		}
+		if err := c.decryptVariables(); err != nil {
+			return err
+		}
+		c.needsRewrite = migrate
+		return nil
+	}
+	if _, exists := object["commands"]; exists {
+		return fmt.Errorf("commands 必须为命令数组，已保留原文件: %s", c.filePath)
 	}
 
 	// Try legacy format: { "name": "command" }
 	var legacy map[string]string
 	if err := json.Unmarshal(data, &legacy); err == nil {
 		c.commands = []Command{}
-		for name, cmd := range legacy {
+		names := make([]string, 0, len(legacy))
+		for name := range legacy {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			cmd := legacy[name]
+			if string(object[name]) == "null" {
+				return fmt.Errorf("旧格式命令不能为空")
+			}
 			c.commands = append(c.commands, Command{
 				ID:        generateID(),
 				Name:      name,
@@ -66,23 +104,61 @@ func (c *Config) load() {
 				UpdatedAt: time.Now(),
 			})
 		}
-		c.save()
-		return
+		c.renumberLocked()
+		c.needsRewrite = true
+		return nil
 	}
 
-	c.commands = []Command{}
+	return fmt.Errorf("配置格式无效，已保留原文件: %s", c.filePath)
 }
 
-func (c *Config) save() {
-	store := CommandStore{Commands: c.commands}
-	data, err := json.MarshalIndent(store, "", "  ")
+func (c *Config) save() error {
+	if c.loadErr != nil {
+		return c.loadErr
+	}
+	disk := make([]Command, len(c.commands))
+	for i, cmd := range c.commands {
+		disk[i] = cloneCommand(cmd)
+		for j := range disk[i].Variables {
+			v := &disk[i].Variables[j]
+			protected, err := protectSecret(v.Value)
+			if err != nil {
+				return fmt.Errorf("加密变量失败: %w", err)
+			}
+			v.ProtectedValue, v.Value = protected, ""
+		}
+	}
+	data, err := json.MarshalIndent(CommandStore{Commands: disk}, "", "  ")
 	if err != nil {
-		fmt.Printf("Error marshaling config: %v\n", err)
-		return
+		return err
 	}
-	if err := os.WriteFile(c.filePath, data, 0644); err != nil {
-		fmt.Printf("Error writing config: %v\n", err)
+	return atomicWrite(c.filePath, data)
+}
+
+func (c *Config) decryptVariables() error {
+	for i := range c.commands {
+		for j := range c.commands[i].Variables {
+			v := &c.commands[i].Variables[j]
+			if v.ProtectedValue == "" {
+				continue
+			}
+			value, err := unprotectSecret(v.ProtectedValue)
+			if err != nil {
+				return fmt.Errorf("解密变量失败（需要原 Windows 用户）: %w", err)
+			}
+			v.Value, v.ProtectedValue = value, ""
+		}
 	}
+	return nil
+}
+
+// Mutations keep the original in-memory snapshot until persistence succeeds.
+func (c *Config) checkpointLocked() func() {
+	before := make([]Command, len(c.commands))
+	for i, cmd := range c.commands {
+		before[i] = cloneCommand(cmd)
+	}
+	return func() { c.commands = before }
 }
 
 // The slice order is the display order: new commands go to the top.
@@ -133,16 +209,20 @@ func (c *Config) GetCommand(id string) *Command {
 	return nil
 }
 
-func (c *Config) AddCommand(cmd Command) Command {
+func (c *Config) AddCommand(cmd Command) (Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	cmd.ID = generateID()
 	cmd.CreatedAt = time.Now()
 	cmd.UpdatedAt = time.Now()
 	c.commands = append([]Command{cloneCommand(cmd)}, c.commands...)
 	c.renumberLocked()
-	c.save()
-	return cmd
+	if err := c.save(); err != nil {
+		rollback()
+		return Command{}, err
+	}
+	return cloneCommand(c.commands[0]), nil
 }
 
 // renumberLocked rewrites Order fields to match slice order (caller holds the lock)
@@ -152,9 +232,10 @@ func (c *Config) renumberLocked() {
 	}
 }
 
-func (c *Config) DuplicateCommand(id string) *Command {
+func (c *Config) DuplicateCommand(id string) (*Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	for i := range c.commands {
 		if c.commands[i].ID == id {
 			clone := cloneCommand(c.commands[i])
@@ -174,78 +255,102 @@ func (c *Config) DuplicateCommand(id string) *Command {
 			copy(c.commands[i+2:], c.commands[i+1:])
 			c.commands[i+1] = clone
 			c.renumberLocked()
-			c.save()
+			if err := c.save(); err != nil {
+				rollback()
+				return nil, err
+			}
 			result := cloneCommand(c.commands[i+1])
-			return &result
+			return &result, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("命令不存在: %s", id)
 }
 
-func (c *Config) UpdateCommand(cmd Command) *Command {
+func (c *Config) UpdateCommand(cmd Command) (*Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	for i := range c.commands {
 		if c.commands[i].ID == cmd.ID {
 			cmd.CreatedAt = c.commands[i].CreatedAt
+			cmd.Archived = c.commands[i].Archived
+			cmd.ArchivedAt = c.commands[i].ArchivedAt
+			cmd.Order = c.commands[i].Order
 			cmd.UpdatedAt = time.Now()
 			c.commands[i] = cloneCommand(cmd)
-			c.save()
+			if err := c.save(); err != nil {
+				rollback()
+				return nil, err
+			}
 			result := cloneCommand(c.commands[i])
-			return &result
+			return &result, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("命令不存在: %s", cmd.ID)
 }
 
-func (c *Config) DeleteCommand(id string) bool {
+func (c *Config) DeleteCommand(id string) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	for i := range c.commands {
 		if c.commands[i].ID == id {
 			c.commands = append(c.commands[:i], c.commands[i+1:]...)
-			c.save()
-			return true
+			c.renumberLocked()
+			if err := c.save(); err != nil {
+				rollback()
+				return false, err
+			}
+			return true, nil
 		}
 	}
-	return false
+	return false, fmt.Errorf("命令不存在: %s", id)
 }
 
-func (c *Config) ArchiveCommand(id string) *Command {
+func (c *Config) ArchiveCommand(id string) (*Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	for i := range c.commands {
 		if c.commands[i].ID == id {
 			c.commands[i].Archived = true
 			c.commands[i].ArchivedAt = time.Now().Format(time.RFC3339)
 			c.commands[i].UpdatedAt = time.Now()
-			c.save()
+			if err := c.save(); err != nil {
+				rollback()
+				return nil, err
+			}
 			result := cloneCommand(c.commands[i])
-			return &result
+			return &result, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("命令不存在: %s", id)
 }
 
-func (c *Config) RestoreCommand(id string) *Command {
+func (c *Config) RestoreCommand(id string) (*Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	for i := range c.commands {
 		if c.commands[i].ID == id {
 			c.commands[i].Archived = false
 			c.commands[i].ArchivedAt = ""
 			c.commands[i].UpdatedAt = time.Now()
-			c.save()
+			if err := c.save(); err != nil {
+				rollback()
+				return nil, err
+			}
 			result := cloneCommand(c.commands[i])
-			return &result
+			return &result, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("命令不存在: %s", id)
 }
 
-func (c *Config) ReorderCommands(ids []string) {
+func (c *Config) ReorderCommands(ids []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	rollback := c.checkpointLocked()
 	byID := make(map[string]Command, len(c.commands))
 	for _, cmd := range c.commands {
 		byID[cmd.ID] = cmd
@@ -266,7 +371,11 @@ func (c *Config) ReorderCommands(ids []string) {
 	}
 	c.commands = ordered
 	c.renumberLocked()
-	c.save()
+	if err := c.save(); err != nil {
+		rollback()
+		return err
+	}
+	return nil
 }
 
 func generateID() string {

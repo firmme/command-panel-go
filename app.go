@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -5,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,21 +18,33 @@ type App struct {
 	ctx           context.Context
 	config        *Config
 	manager       *ProcessManager
-	baseDir       string
 	sessionMu     sync.RWMutex
 	sessionExitOK map[string]bool // commands that exited(0) during this session
 	trayDone      chan struct{}
 	trayStopOnce  sync.Once
+	commandMu     sync.Mutex
+	stop          chan struct{}
+	stopOnce      sync.Once
 }
 
-func NewApp() *App {
-	baseDir, _ := os.Getwd()
-	return &App{
-		config:        NewConfig(baseDir),
-		manager:       NewProcessManager(baseDir),
-		baseDir:       baseDir,
-		sessionExitOK: make(map[string]bool),
+func NewApp() (*App, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, err
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	baseDir, err := prepareDataDir([]string{filepath.Dir(executable), cwd})
+	if err != nil {
+		return nil, err
+	}
+	manager := NewProcessManager(baseDir)
+	// User data stays fixed; a new command's default directory is the executable's.
+	manager.baseDir = filepath.Dir(executable)
+	return &App{config: NewConfig(baseDir), manager: manager,
+		sessionExitOK: make(map[string]bool), stop: make(chan struct{})}, nil
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -60,159 +73,221 @@ func (a *App) ShowWindow() {
 }
 
 func (a *App) Quit() {
-	if a.ctx != nil {
-		runtime.Quit(a.ctx)
+	if err := a.manager.StopAll(); err != nil {
+		if a.ctx != nil {
+			runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{Type: runtime.ErrorDialog, Title: "退出失败", Message: err.Error()})
+		}
 		return
 	}
-	a.shutdown(nil)
+	if a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
 }
 
 // HideWindow hides the window (minimize to tray) and trims memory
 func (a *App) HideWindow() {
 	if a.ctx != nil {
-		// Ask frontend to release resources before hiding
-		runtime.WindowExecJS(a.ctx, `
-			if (window.gc) window.gc();
-			if (window.caches) {
-				caches.keys().then(names => names.forEach(n => caches.delete(n)));
-			}
-		`)
 		runtime.WindowHide(a.ctx)
 		trimWorkingSet()
 	}
 }
 
+func (a *App) waitAutoStart(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-a.stop:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func (a *App) autoStartCommands() {
-	time.Sleep(5 * time.Second)
-	commands := a.config.GetCommands()
-	for _, cmd := range commands {
-		if cmd.AutoStart && !cmd.Archived {
-			state := a.manager.GetState(cmd.ID)
-			if !state.Running {
-				a.StartCommand(cmd.ID)
-				time.Sleep(2 * time.Second)
+	if !a.waitAutoStart(5*time.Second) || a.config.loadErr != nil {
+		return
+	}
+	for _, cmd := range a.config.GetCommands() {
+		if cmd.AutoStart && !a.manager.GetState(cmd.ID).Running {
+			if result := a.StartCommand(cmd.ID); result != "" && a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "operation-error", result)
+			}
+			if !a.waitAutoStart(2 * time.Second) {
+				return
 			}
 		}
 	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	a.manager.StopAll()
+	a.stopOnce.Do(func() { close(a.stop) })
+	if err := a.manager.StopAll(); err != nil {
+		fmt.Println("Shutdown:", err)
+	}
+	stopTray()
 }
 
 // GetCommands returns non-archived commands
-func (a *App) GetCommands() []Command {
-	return a.config.GetCommands()
+func (a *App) GetCommands() ([]Command, error) {
+	return a.config.GetCommands(), a.config.loadErr
 }
 
 // GetArchivedCommands returns archived commands
-func (a *App) GetArchivedCommands() []Command {
-	return a.config.GetArchivedCommands()
-}
-
-// GetCommand returns a single command by ID
-func (a *App) GetCommand(id string) *Command {
-	return a.config.GetCommand(id)
+func (a *App) GetArchivedCommands() ([]Command, error) {
+	return a.config.GetArchivedCommands(), a.config.loadErr
 }
 
 // AddCommand creates a new command
-func (a *App) AddCommand(cmd Command) Command {
+func (a *App) AddCommand(cmd Command) (Command, error) {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
 	if cmd.Name == "" {
 		cmd.Name = inferName(cmd.Command)
 	}
-	result := a.config.AddCommand(cmd)
-	a.emitUpdate()
-	return result
+	result, err := a.config.AddCommand(cmd)
+	if err == nil {
+		a.emitUpdate()
+	}
+	return result, err
 }
 
 // DuplicateCommand copies an existing command into a new command entry.
-func (a *App) DuplicateCommand(id string) *Command {
-	result := a.config.DuplicateCommand(id)
-	if result != nil {
+func (a *App) DuplicateCommand(id string) (*Command, error) {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	result, err := a.config.DuplicateCommand(id)
+	if err == nil {
 		a.emitUpdate()
 	}
-	return result
+	return result, err
 }
 
 // UpdateCommand updates an existing command
-func (a *App) UpdateCommand(cmd Command) *Command {
+func (a *App) UpdateCommand(cmd Command) (*Command, error) {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
 	if cmd.Name == "" {
 		cmd.Name = inferName(cmd.Command)
 	}
-	result := a.config.UpdateCommand(cmd)
-	a.emitUpdate()
-	return result
+	result, err := a.config.UpdateCommand(cmd)
+	if err == nil {
+		a.emitUpdate()
+	}
+	return result, err
 }
 
 // DeleteCommand deletes a command (stops it first if running)
-func (a *App) DeleteCommand(id string) bool {
-	a.manager.Stop(id)
-	a.config.DeleteCommand(id)
-	// Clean up log file
-	logPath := filepath.Join(a.baseDir, "logs", id+".log")
-	os.Remove(logPath)
+func (a *App) DeleteCommand(id string) (bool, error) {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	if a.config.loadErr != nil {
+		return false, a.config.loadErr
+	}
+	if err := a.manager.Stop(id); err != nil {
+		return false, err
+	}
+	deleted, err := a.config.DeleteCommand(id)
+	if err != nil {
+		return false, err
+	}
 	a.emitUpdate()
-	return true
+	// Configuration deletion is durable even if cleanup fails; report that distinction.
+	if err := a.manager.Remove(id); err != nil {
+		return deleted, fmt.Errorf("命令已删除，但日志清理失败: %w", err)
+	}
+	a.sessionMu.Lock()
+	delete(a.sessionExitOK, id)
+	a.sessionMu.Unlock()
+	return deleted, nil
 }
 
 // StartCommand starts a command
 func (a *App) StartCommand(id string) string {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	if a.config.loadErr != nil {
+		return a.config.loadErr.Error()
+	}
 	cmd := a.config.GetCommand(id)
-	if cmd == nil {
+	if cmd == nil || cmd.Archived {
 		return "Command not found"
 	}
 	// Substitute sensitive variables for execution; the log/state keep the
-	// placeholder form so secret values never touch disk.
+	// placeholder form. Child output is redacted before writing logs.
 	actual := substituteVariables(cmd.Command, cmd.Variables)
-	if err := a.manager.Start(cmd.ID, cmd.Name, actual, cmd.Command, cmd.CWD, cmd.Engine); err != nil {
+	secrets := make([]string, 0, len(cmd.Variables))
+	for _, v := range cmd.Variables {
+		secrets = append(secrets, v.Value)
+	}
+	if err := a.manager.Start(cmd.ID, cmd.Name, actual, cmd.Command, cmd.CWD, cmd.Engine, secrets...); err != nil {
 		return err.Error()
 	}
-	a.emitUpdate()
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "run-state-changed", id, 0, false)
+	}
 	return ""
 }
 
 // substituteVariables replaces ${name} placeholders with their stored values
 func substituteVariables(command string, vars []CommandVariable) string {
+	pairs := make([]string, 0, len(vars)*2)
 	for _, v := range vars {
-		command = strings.ReplaceAll(command, "${"+v.Name+"}", v.Value)
+		pairs = append(pairs, "${"+v.Name+"}", v.Value)
 	}
-	return command
+	return strings.NewReplacer(pairs...).Replace(command)
 }
 
 // StopCommand stops a running command
 func (a *App) StopCommand(id string) string {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
 	if err := a.manager.Stop(id); err != nil {
 		return err.Error()
 	}
-	a.emitUpdate()
 	return ""
 }
 
 // ArchiveCommand archives a command (stops it first if running)
-func (a *App) ArchiveCommand(id string) *Command {
-	state := a.manager.GetState(id)
-	if state.Running {
-		a.manager.Stop(id)
+func (a *App) ArchiveCommand(id string) (*Command, error) {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	if a.config.loadErr != nil {
+		return nil, a.config.loadErr
 	}
-	result := a.config.ArchiveCommand(id)
-	a.emitUpdate()
-	return result
+	if err := a.manager.Stop(id); err != nil {
+		return nil, err
+	}
+	result, err := a.config.ArchiveCommand(id)
+	if err == nil {
+		a.emitUpdate()
+	}
+	return result, err
 }
 
-// RestoreCommand restores an archived command
-func (a *App) RestoreCommand(id string) *Command {
-	result := a.config.RestoreCommand(id)
-	a.emitUpdate()
-	return result
+func (a *App) RestoreCommand(id string) (*Command, error) {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	result, err := a.config.RestoreCommand(id)
+	if err == nil {
+		a.emitUpdate()
+	}
+	return result, err
 }
 
-// GetLog returns the full log content for a command
-func (a *App) GetLog(id string) string {
-	return a.manager.GetLog(id)
+func (a *App) ReadLog(id string, offset int64, version string) (LogChunk, error) {
+	if a.config.GetCommand(id) == nil {
+		return LogChunk{}, fmt.Errorf("命令不存在")
+	}
+	return a.manager.ReadLog(id, offset, version)
 }
 
 // ClearLog clears the log file for a command
 func (a *App) ClearLog(id string) string {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	if a.config.GetCommand(id) == nil {
+		return "命令不存在"
+	}
 	if err := a.manager.ClearLog(id); err != nil {
 		return err.Error()
 	}
@@ -220,13 +295,18 @@ func (a *App) ClearLog(id string) string {
 }
 
 // ReorderCommands updates the order of commands
-func (a *App) ReorderCommands(ids []string) {
-	a.config.ReorderCommands(ids)
+func (a *App) ReorderCommands(ids []string) error {
+	a.commandMu.Lock()
+	defer a.commandMu.Unlock()
+	if err := a.config.ReorderCommands(ids); err != nil {
+		return err
+	}
 	a.emitUpdate()
+	return nil
 }
 
 // GetRunStates returns the run state of all commands
-func (a *App) GetRunStates() map[string]*RunState {
+func (a *App) GetRunStates() RunStateSnapshot {
 	states := a.manager.GetAllStates()
 	// Also include states for commands that haven't been started (for log info)
 	for _, cmd := range a.config.GetAllCommands() {
@@ -234,22 +314,7 @@ func (a *App) GetRunStates() map[string]*RunState {
 			states[cmd.ID] = a.manager.GetState(cmd.ID)
 		}
 	}
-	return states
-}
-
-// GetRunState returns the run state of a single command
-func (a *App) GetRunState(id string) *RunState {
-	return a.manager.GetState(id)
-}
-
-// GetBaseDir returns the base directory
-func (a *App) GetBaseDir() string {
-	return a.baseDir
-}
-
-// GetPlatform returns the OS the app is running on (windows / linux / darwin)
-func (a *App) GetPlatform() string {
-	return goruntime.GOOS
+	return RunStateSnapshot{States: states}
 }
 
 // OpenURL opens an external URL in the system browser (http/https only)
@@ -288,7 +353,7 @@ func (a *App) PickExecutable() *ExecutablePick {
 
 // InstallAutostart installs Windows autostart
 func (a *App) InstallAutostart() string {
-	if err := installAutostart(a.baseDir); err != nil {
+	if err := installAutostart(); err != nil {
 		return err.Error()
 	}
 	return ""

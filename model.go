@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import "time"
@@ -19,8 +21,9 @@ type Command struct {
 }
 
 type CommandVariable struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Name           string `json:"name"`
+	Value          string `json:"value,omitempty"`
+	ProtectedValue string `json:"protectedValue,omitempty"`
 }
 
 // Returned values must not retain mutable slices owned by Config.
@@ -53,4 +56,9 @@ type ManagedCommand struct {
 	Command string `json:"command"`
 	CWD     string `json:"cwd"`
 	Name    string `json:"name"`
+}
+
+// RunStateSnapshot keeps nested model types discoverable by Wails v2.
+type RunStateSnapshot struct {
+	States map[string]*RunState `json:"states"`
 }

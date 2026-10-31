@@ -1,3 +1,5 @@
+//go:build windows && !bindings
+
 package main
 
 import (
@@ -13,7 +15,11 @@ import (
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	app, err := NewApp()
+	if err != nil {
+		showStartupError(err)
+		return
+	}
 
 	// Register the tray on the main thread and let Wails/WebView pump messages.
 	app.startTray(func() {
@@ -22,7 +28,7 @@ func main() {
 		app.Quit()
 	})
 
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:     "命令面板",
 		Width:     1100,
 		Height:    750,
@@ -35,6 +41,10 @@ func main() {
 		OnStartup:         app.startup,
 		HideWindowOnClose: true,
 		OnShutdown:        app.shutdown,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "command-panel-fd1cf8db-46b4-4d69-a670-afd919f3a32c",
+			OnSecondInstanceLaunch: func(options.SecondInstanceData) { app.ShowWindow() },
+		},
 		Bind: []interface{}{
 			app,
 		},
