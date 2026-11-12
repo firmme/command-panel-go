@@ -19,7 +19,7 @@ try {
     npm.cmd --prefix frontend run build
     if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
 
-    go run ./scripts/windows-resources/main.go $resourcePath
+    go run ./scripts/windows-resources/main.go $resourcePath $Version
     if ($LASTEXITCODE -ne 0) { throw "Windows resource generation failed." }
 
     New-Item -ItemType Directory -Path "build/bin" -Force | Out-Null

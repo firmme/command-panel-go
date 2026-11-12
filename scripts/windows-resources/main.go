@@ -1,6 +1,7 @@
 //go:build tools
 
 // Generates the Windows resources used by the native release build.
+// Usage: windows-resources output.syso [version]
 package main
 
 import (
@@ -8,7 +9,9 @@ import (
 	"embed"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/tc-hib/winres"
 	"github.com/tc-hib/winres/version"
@@ -18,16 +21,21 @@ import (
 var assets embed.FS
 
 func main() {
-	if err := generate(); err != nil {
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		fmt.Fprintln(os.Stderr, "usage: windows-resources output.syso [version]")
+		os.Exit(1)
+	}
+	appVersion := "1.0.0"
+	if len(os.Args) == 3 {
+		appVersion = os.Args[2]
+	}
+	if err := generate(appVersion); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func generate() error {
-	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: windows-resources output.syso")
-	}
+func generate(appVersion string) error {
 	arch, ok := map[string]winres.Arch{"amd64": winres.ArchAMD64, "arm64": winres.ArchARM64, "386": winres.ArchI386}[runtime.GOARCH]
 	if !ok {
 		return fmt.Errorf("unsupported architecture: %s", runtime.GOARCH)
@@ -54,8 +62,26 @@ func generate() error {
 	}
 	resources.SetManifest(manifest)
 	var info version.Info
-	if err := info.UnmarshalJSON([]byte(`{"fixed":{"file_version":"1.0.0"},"info":{"0000":{"ProductVersion":"1.0.0","FileDescription":"命令面板","ProductName":"命令面板"}}}`)); err != nil {
-		return err
+	// Windows shows the string table in the Details tab, and the fixed struct
+	// is what scripts read, so set both through the package helpers.
+	// The fixed file version takes four numbers; the app version is x.y.z.
+	fixedVersion := appVersion
+	if parts := strings.Split(fixedVersion, "."); len(parts) == 3 {
+		fixedVersion += ".0"
+	}
+	info.SetFileVersion(fixedVersion)
+	info.SetProductVersion(fixedVersion)
+	for key, value := range map[string]string{
+		version.ProductName:        "命令面板",
+		version.FileDescription:    "命令面板",
+		version.ProductVersion:     appVersion,
+		version.FileVersion:        appVersion,
+		version.CompanyName:        "firmme",
+		version.OriginalFilename:   filepath.Base(os.Args[1]),
+	} {
+		if err := info.Set(version.LangNeutral, key, value); err != nil {
+			return err
+		}
 	}
 	resources.SetVersionInfo(info)
 	output, err := os.Create(os.Args[1])

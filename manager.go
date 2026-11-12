@@ -216,7 +216,17 @@ func (pm *ProcessManager) Stop(id string) error {
 	case <-info.Done:
 		return nil
 	case <-timer.C:
-		return fmt.Errorf("停止超时，进程尚未确认退出: %s", id)
+		// The shell is gone but a runner that escaped the job (PowerShell 7
+		// gives its children a nested job) still holds the log pipe, so
+		// cmd.Wait cannot return. Releasing the log handle unblocks the copy.
+		info.LogFile.Close()
+		info.Cmd.Process.Kill()
+		select {
+		case <-info.Done:
+			return nil
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("停止超时，进程尚未确认退出: %s", id)
+		}
 	}
 }
 

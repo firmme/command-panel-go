@@ -1,7 +1,7 @@
 export function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return String(text).replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]));
 }
 
 const URL_RE = /(https?:\/\/[^\s<>"')\]]+)/g;
@@ -9,6 +9,29 @@ const URL_RE = /(https?:\/\/[^\s<>"')\]]+)/g;
 // Escapes HTML then turns http(s) URLs into clickable links
 export function linkify(text) {
     return escapeHtml(text).replace(URL_RE, (m) => `<a class="ext-link" data-url="${m}">${m}</a>`);
+}
+
+// Absolute Windows path: drive root, UNC share, or forward-slash variant.
+const PATH_RE = /(?:[A-Za-z]:[\\/]|\\\\)[^\s<>"|?*]*/g;
+const LOG_RE = new RegExp(`${URL_RE.source}|${PATH_RE.source}`, 'g');
+
+// Escapes HTML, then marks http(s) URLs and absolute paths as openable links.
+// Trailing punctuation stays outside the link because log lines are prose.
+export function linkifyLog(text) {
+    return escapeHtml(text).replace(LOG_RE, (m) => {
+        const {core, tail} = splitTrailing(m, /[.,;:!?)\]}>'"`]+$/);
+        if (/^https?:\/\//.test(core)) {
+            return `<a class="ext-link" data-url="${core}" title="Ctrl+单击在浏览器打开">${core}</a>${tail}`;
+        }
+        if (core.replace(/[\\/]+$/, '').length < 3) return m;
+        return `<a class="ext-link ext-path" data-path="${core}" title="Ctrl+单击打开，右键查看所在目录">${core}</a>${tail}`;
+    });
+}
+
+function splitTrailing(text, re) {
+    const match = text.match(re);
+    if (!match) return {core: text, tail: ''};
+    return {core: text.slice(0, text.length - match[0].length), tail: match[0]};
 }
 
 export function highlightCommand(cmd) {

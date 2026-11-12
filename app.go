@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -328,6 +329,149 @@ func (a *App) OpenURL(url string) {
 	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 		_ = a.wails.Browser.OpenURL(url)
 	}
+}
+
+// OpenCommandDir opens a command's working directory in Explorer.
+func (a *App) OpenCommandDir(id string) string {
+	cmd := a.config.GetCommand(id)
+	if cmd == nil {
+		return "命令不存在"
+	}
+	dir := cmd.CWD
+	if dir == "" {
+		dir = a.manager.baseDir
+	}
+	if !isExistingDir(dir) {
+		return "工作目录不存在: " + dir
+	}
+	a.openPath(dir)
+	return ""
+}
+
+// PathTarget describes where a log path points, for the "open" action.
+type PathTarget struct {
+	Path string `json:"path"`
+	Dir  string `json:"dir"`
+	Kind string `json:"kind"` // dir | file
+}
+
+// resolvePathTarget validates a path printed in a log.
+func (a *App) resolvePathTarget(path string) (PathTarget, bool) {
+	clean := strings.TrimSpace(strings.Trim(path, `"'`))
+	if clean == "" {
+		return PathTarget{}, false
+	}
+	if !filepath.IsAbs(clean) {
+		return PathTarget{}, false
+	}
+	info, err := os.Stat(clean)
+	if err != nil {
+		return PathTarget{}, false
+	}
+	if info.IsDir() {
+		return PathTarget{Path: clean, Dir: clean, Kind: "dir"}, true
+	}
+	return PathTarget{Path: clean, Dir: filepath.Dir(clean), Kind: "file"}, true
+}
+
+// ResolvePath reports whether a log path exists (used to enable the menu item).
+func (a *App) ResolvePath(path string) *PathTarget {
+	if target, ok := a.resolvePathTarget(path); ok {
+		return &target
+	}
+	return nil
+}
+
+// OpenPath opens a file with its default program, or a folder in Explorer.
+func (a *App) OpenPath(path string) string {
+	clean := strings.TrimSpace(strings.Trim(path, `"'`))
+	if info, err := os.Stat(clean); err == nil {
+		if info.IsDir() {
+			a.openPath(clean)
+		} else {
+			_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", clean).Start()
+		}
+		return ""
+	}
+	// A path that no longer exists still has a meaningful folder to show.
+	dir := filepath.Dir(clean)
+	if isExistingDir(dir) {
+		a.openPathWithSelect(clean, dir)
+		return ""
+	}
+	return "路径不存在: " + clean
+}
+
+// RevealPath opens Explorer with the given path selected.
+func (a *App) RevealPath(path string) string {
+	target, ok := a.resolvePathTarget(path)
+	if !ok {
+		dir := filepath.Dir(strings.TrimSpace(strings.Trim(path, `"'`)))
+		if isExistingDir(dir) {
+			a.openPath(dir)
+			return ""
+		}
+		return "路径不存在: " + path
+	}
+	if target.Kind == "dir" {
+		a.openPath(target.Path)
+		return ""
+	}
+	a.openPathWithSelect(target.Path, target.Dir)
+	return ""
+}
+
+// CheckDirectory returns "" when dir can host a command, else the reason.
+func (a *App) CheckDirectory(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	if !isExistingDir(dir) {
+		return "工作目录不存在: " + dir
+	}
+	return ""
+}
+
+// PickDirectory lets the user choose a working directory.
+func (a *App) PickDirectory() string {
+	if a.wails == nil {
+		return ""
+	}
+	// A folder-only selection is the picker this dialog uses for directories.
+	dir, err := a.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:                "选择工作目录",
+		CanChooseDirectories: true,
+		CanChooseFiles:       true,
+		CanCreateDirectories: true,
+	}).PromptForSingleSelection()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+func (a *App) openPath(dir string) {
+	if a.wails != nil {
+		if err := a.wails.Browser.OpenURL(dir); err == nil {
+			return
+		}
+	}
+	_ = exec.Command("explorer.exe", dir).Start()
+}
+
+// openPathWithSelect shows the containing folder with the item highlighted.
+func (a *App) openPathWithSelect(path, dir string) {
+	if a.wails != nil {
+		_ = a.wails.Browser.OpenURL("file:///" + strings.ReplaceAll(path, `\`, "/"))
+		return
+	}
+	_ = exec.Command("explorer.exe", "/select,", path).Start()
+}
+
+func isExistingDir(dir string) bool {
+	info, err := os.Stat(dir)
+	return err == nil && info.IsDir()
 }
 
 // ExecutablePick is the result of choosing an executable in the file dialog

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRefreshQueue} from '../src/refresh-queue.js';
-import {executableCommand} from '../src/format.js';
+import {executableCommand, linkifyLog} from '../src/format.js';
 import {createLogPanel} from '../src/log-panel.js';
 
 const deferred = () => {
@@ -48,6 +48,22 @@ test('refresh queue recovers after a failed backend call', async () => {
 test('executable commands quote paths for the selected shell', () => {
     assert.equal(executableCommand("C:\\Program Files\\it's $app.exe", ''), "& 'C:\\Program Files\\it''s $app.exe'");
     assert.equal(executableCommand('C:\\Program Files\\app.exe', 'cmd'), '"C:\\Program Files\\app.exe"');
+});
+
+test('log renderer marks URLs and absolute paths, keeping trailing punctuation out', () => {
+    const url = linkifyLog('see https://example.com/a?b=1.');
+    assert.match(url, /<a class="ext-link" data-url="https:\/\/example\.com\/a\?b=1"/);
+    assert.match(url, /<\/a>\.$/);
+
+    const path = linkifyLog('wrote C:\\work\\out.wav, done');
+    assert.match(path, /<a class="ext-link ext-path" data-path="C:\\work\\out\.wav"/);
+    assert.match(path, /<\/a>, done$/);
+
+    const unc = linkifyLog('\\\\server\\share\\file.txt');
+    assert.match(unc, /data-path="\\\\server\\share\\file\.txt"/);
+
+    assert.equal(linkifyLog('no links here'), 'no links here');
+    assert.equal(linkifyLog('a/b'), 'a/b');
 });
 
 function logHarness(readLog) {

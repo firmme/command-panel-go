@@ -33,6 +33,15 @@ export function ArchiveCommand(id) {
 }
 
 /**
+ * CheckDirectory returns "" when dir can host a command, else the reason.
+ * @param {string} dir
+ * @returns {$CancellablePromise<string>}
+ */
+export function CheckDirectory(dir) {
+    return $Call.ByName("main.App.CheckDirectory", dir);
+}
+
+/**
  * @param {boolean} manual
  * @returns {$CancellablePromise<$models.updateInfo | null>}
  */
@@ -141,12 +150,38 @@ export function IsAutostartInstalled() {
 }
 
 /**
+ * OpenCommandDir opens a command's working directory in Explorer.
+ * @param {string} id
+ * @returns {$CancellablePromise<string>}
+ */
+export function OpenCommandDir(id) {
+    return $Call.ByName("main.App.OpenCommandDir", id);
+}
+
+/**
+ * OpenPath opens a file with its default program, or a folder in Explorer.
+ * @param {string} path
+ * @returns {$CancellablePromise<string>}
+ */
+export function OpenPath(path) {
+    return $Call.ByName("main.App.OpenPath", path);
+}
+
+/**
  * OpenURL opens an external URL in the system browser (http/https only)
  * @param {string} url
  * @returns {$CancellablePromise<void>}
  */
 export function OpenURL(url) {
     return $Call.ByName("main.App.OpenURL", url);
+}
+
+/**
+ * PickDirectory lets the user choose a working directory.
+ * @returns {$CancellablePromise<string>}
+ */
+export function PickDirectory() {
+    return $Call.ByName("main.App.PickDirectory");
 }
 
 /**
@@ -188,6 +223,17 @@ export function ReorderCommands(ids) {
 }
 
 /**
+ * ResolvePath reports whether a log path exists (used to enable the menu item).
+ * @param {string} path
+ * @returns {$CancellablePromise<$models.PathTarget | null>}
+ */
+export function ResolvePath(path) {
+    return $Call.ByName("main.App.ResolvePath", path).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType10($result);
+    }));
+}
+
+/**
  * @param {string} id
  * @returns {$CancellablePromise<$models.Command | null>}
  */
@@ -195,6 +241,15 @@ export function RestoreCommand(id) {
     return $Call.ByName("main.App.RestoreCommand", id).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType1($result);
     }));
+}
+
+/**
+ * RevealPath opens Explorer with the given path selected.
+ * @param {string} path
+ * @returns {$CancellablePromise<string>}
+ */
+export function RevealPath(path) {
+    return $Call.ByName("main.App.RevealPath", path);
 }
 
 /**
@@ -252,3 +307,5 @@ const $$createType5 = $models.RunStateSnapshot.createFrom;
 const $$createType6 = $models.ExecutablePick.createFrom;
 const $$createType7 = $Create.Nullable($$createType6);
 const $$createType8 = $models.LogChunk.createFrom;
+const $$createType9 = $models.PathTarget.createFrom;
+const $$createType10 = $Create.Nullable($$createType9);

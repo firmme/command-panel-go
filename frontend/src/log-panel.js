@@ -1,5 +1,5 @@
 import {ReadLog, ClearLog} from '../bindings/command-panel/app.js';
-import {inferName, linkify} from './format.js';
+import {inferName, linkifyLog} from './format.js';
 
 const MAX_DISPLAY_CHARS = 256 * 1024;
 
@@ -61,8 +61,8 @@ export function createLogPanel({getCommands, getRunStates, showToast, readLog = 
                 const combined = buffer + chunk.text;
                 const trimmed = combined.length > MAX_DISPLAY_CHARS;
                 buffer = combined.slice(-MAX_DISPLAY_CHARS);
-                if (chunk.reset || trimmed) content.innerHTML = linkify(buffer);
-                else if (chunk.text) content.insertAdjacentHTML('beforeend', linkify(chunk.text));
+                if (chunk.reset || trimmed) content.innerHTML = linkifyLog(buffer);
+                else if (chunk.text) content.insertAdjacentHTML('beforeend', linkifyLog(chunk.text));
                 if (nearBottom) content.scrollTop = content.scrollHeight;
                 updateStatus();
                 return;

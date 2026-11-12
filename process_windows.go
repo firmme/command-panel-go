@@ -16,6 +16,7 @@ import (
 type processJob struct {
 	mu     sync.Mutex
 	handle windows.Handle
+	root   uint32 // shell PID, used to sweep children that escaped the job
 }
 
 func newProcessJob() (*processJob, error) {
@@ -41,6 +42,9 @@ func (j *processJob) assignAndResume(pid uint32) error {
 	if err := windows.AssignProcessToJobObject(j.handle, p); err != nil {
 		return err
 	}
+	j.mu.Lock()
+	j.root = pid
+	j.mu.Unlock()
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
 		return err
@@ -68,7 +72,62 @@ func (j *processJob) terminate() error {
 	if j.handle == 0 {
 		return nil
 	}
-	return windows.TerminateJobObject(j.handle, 1)
+	if err := windows.TerminateJobObject(j.handle, 1); err != nil {
+		return err
+	}
+	// TerminateJobObject kills the job's own members. PowerShell 7 gives its
+	// children a nested job of their own, so they leave this job and survive;
+	// sweep the tree until a round finds nothing left to kill.
+	for round := 0; round < 16 && j.root != 0; round++ {
+		if !j.killDescendantsLocked(j.root) {
+			break
+		}
+	}
+	return nil
+}
+
+// killDescendantsLocked snapshots the process table, kills every descendant of
+// root that is still running, and reports whether it found any.
+func (j *processJob) killDescendantsLocked(root uint32) bool {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(snapshot)
+	parentOf := make(map[uint32]uint32)
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
+		parentOf[entry.ProcessID] = entry.ParentProcessID
+	}
+	killed := false
+	for pid := range parentOf {
+		if pid == root || !isDescendant(pid, root, parentOf) {
+			continue
+		}
+		process, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, pid)
+		if err != nil {
+			continue
+		}
+		if err := windows.TerminateProcess(process, 1); err == nil {
+			killed = true
+		}
+		windows.CloseHandle(process)
+	}
+	return killed
+}
+
+func isDescendant(pid, root uint32, parentOf map[uint32]uint32) bool {
+	for depth := 0; depth < 32; depth++ {
+		parent, ok := parentOf[pid]
+		if !ok || parent == 0 || parent == pid {
+			return false
+		}
+		if parent == root {
+			return true
+		}
+		pid = parent
+	}
+	return false
 }
 
 func (j *processJob) wait() error {

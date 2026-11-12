@@ -1,5 +1,5 @@
 import './style.css';
-import {GetCommands, GetArchivedCommands, DeleteCommand, DuplicateCommand, StartCommand, StopCommand, ArchiveCommand, RestoreCommand, ReorderCommands, GetRunStates, InstallAutostart, UninstallAutostart, IsAutostartInstalled, HideWindow, OpenURL, PickExecutable, CheckForUpdates, IgnoreUpdate, InstallUpdate} from '../bindings/command-panel/app.js';
+import {GetCommands, GetArchivedCommands, DeleteCommand, DuplicateCommand, StartCommand, StopCommand, ArchiveCommand, RestoreCommand, ReorderCommands, GetRunStates, InstallAutostart, UninstallAutostart, IsAutostartInstalled, HideWindow, OpenURL, OpenPath, OpenCommandDir, RevealPath, ResolvePath, PickExecutable, CheckForUpdates, IgnoreUpdate, InstallUpdate} from '../bindings/command-panel/app.js';
 import {Events} from '@wailsio/runtime';
 import {escapeHtml, executableCommand} from './format.js';
 import {createCommandForm} from './form.js';
@@ -331,14 +331,18 @@ function setupEventListeners() {
     // Close log
     document.getElementById('btn-close-log').addEventListener('click', logs.close);
 
-    // External links (in logs and notes) open in the system browser
+    // External links (in logs and notes) open in the system browser.
+    // Log paths open only on Ctrl+click, so a plain click still selects text.
     document.addEventListener('click', (e) => {
         const link = e.target.closest('.ext-link');
-        if (link) {
-            e.preventDefault();
-            e.stopPropagation();
-            OpenURL(link.dataset.url);
+        if (!link) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (link.dataset.path) {
+            if (e.ctrlKey) OpenPath(link.dataset.path);
+            return;
         }
+        OpenURL(link.dataset.url);
     });
 
     setupLogContextMenu();
@@ -386,6 +390,11 @@ async function handleAction(action, id) {
             case 'edit':
                 editCommand(id);
                 break;
+            case 'openDir': {
+                const openError = await OpenCommandDir(id);
+                if (openError) showToast(openError, true);
+                break;
+            }
             case 'duplicate':
                 const duplicated = await DuplicateCommand(id);
                 if (duplicated) {
@@ -507,22 +516,39 @@ function openMenuAt(x, y, items, alignRight = false) {
     activeMenu = menu;
 }
 
-// Context menu for the log panel: copy selection / copy all
-function setupLogContextMenu() {
-    logContent.addEventListener('contextmenu', (e) => {
+// Context menu for the log panel.
+// A selection keeps the plain text menu; otherwise a right-clicked path adds
+// actions for opening it or showing its folder in Explorer.
+async function setupLogContextMenu() {
+    logContent.addEventListener('contextmenu', async (e) => {
         e.preventDefault();
         const selection = window.getSelection().toString();
-        openMenuAt(e.clientX, e.clientY, [
-            {
-                label: '复制选中文本',
-                disabled: !selection,
-                action: () => copyToClipboard(selection),
-            },
-            {
-                label: '复制全部日志',
-                action: () => copyToClipboard(logContent.textContent),
-            },
-        ]);
+        if (selection) {
+            openMenuAt(e.clientX, e.clientY, [
+                {label: '复制选中文本', action: () => copyToClipboard(selection)},
+                {label: '复制全部日志', action: () => copyToClipboard(logContent.textContent)},
+            ]);
+            return;
+        }
+        const link = e.target.closest('.ext-path');
+        const path = link?.dataset.path;
+        const items = [];
+        if (path) {
+            let target = null;
+            try { target = await ResolvePath(path); } catch (err) { target = null; }
+            items.push({label: '复制路径', action: () => copyToClipboard(path)});
+            if (target) {
+                items.push({icon: 'folder', label: '打开', action: () => OpenPath(path)});
+                items.push({
+                    icon: 'box',
+                    label: target.kind === 'dir' ? '在文件浏览器中打开' : '在文件浏览器中显示',
+                    action: () => RevealPath(path),
+                });
+            }
+        } else {
+            items.push({label: '复制全部日志', action: () => copyToClipboard(logContent.textContent)});
+        }
+        openMenuAt(e.clientX, e.clientY, items);
     });
 }
 
@@ -533,6 +559,7 @@ function openCardMenu(anchor, id, isArchive) {
         {icon: 'trash', label: '删除', danger: true, action: () => handleAction('delete', id)},
     ] : [
         {icon: 'pencil', label: '编辑', action: () => handleAction('edit', id)},
+        {icon: 'folder', label: '打开工作目录', action: () => handleAction('openDir', id)},
         {icon: 'copy', label: '复制命令', action: () => handleAction('duplicate', id)},
         {icon: 'box', label: '归档', action: () => handleAction('archive', id)},
         {icon: 'trash', label: '删除', danger: true, action: () => handleAction('delete', id)},

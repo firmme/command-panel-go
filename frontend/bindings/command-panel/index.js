@@ -13,6 +13,7 @@ export {
     ExecutablePick,
     LogChunk,
     ManagedCommand,
+    PathTarget,
     RunState,
     RunStateSnapshot
 } from "./models.js";

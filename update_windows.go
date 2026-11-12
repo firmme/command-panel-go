@@ -21,7 +21,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-var appVersion = "1.0.0"
+var appVersion = "1.1.0"
 
 const updateRepository = "firmme/command-panel-go"
 const updateAPI = "https://api.github.com"

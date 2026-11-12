@@ -300,6 +300,52 @@ export class ManagedCommand {
     }
 }
 
+/**
+ * PathTarget describes where a log path points, for the "open" action.
+ */
+export class PathTarget {
+    /**
+     * Creates a new PathTarget instance.
+     * @param {Partial<PathTarget>} [$$source = {}] - The source object to create the PathTarget.
+     */
+    constructor($$source = {}) {
+        if (!("path" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["path"] = "";
+        }
+        if (!("dir" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["dir"] = "";
+        }
+        if (!("kind" in $$source)) {
+            /**
+             * dir | file
+             * @member
+             * @type {string}
+             */
+            this["kind"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PathTarget instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {PathTarget}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PathTarget(/** @type {Partial<PathTarget>} */($$parsedSource));
+    }
+}
+
 export class RunState {
     /**
      * Creates a new RunState instance.

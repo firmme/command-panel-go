@@ -314,6 +314,23 @@ html, body {
     flex: 0 0 170px;
 }
 
+/* 工作目录输入框 + 选择目录按钮 */
+.input-with-btn {
+    display: flex;
+    gap: 6px;
+}
+
+.input-with-btn input {
+    flex: 1;
+    min-width: 0;
+}
+
+.input-with-btn .icon-btn {
+    flex: 0 0 32px;
+    height: 32px;
+    align-self: flex-start;
+}
+
 #cmd-command {
     font-family: var(--font-mono);
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -212,6 +213,9 @@ func (c *Config) GetCommand(id string) *Command {
 func (c *Config) AddCommand(cmd Command) (Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := validateWorkingDir(cmd.CWD); err != nil {
+		return Command{}, err
+	}
 	rollback := c.checkpointLocked()
 	cmd.ID = generateID()
 	cmd.CreatedAt = time.Now()
@@ -223,6 +227,23 @@ func (c *Config) AddCommand(cmd Command) (Command, error) {
 		return Command{}, err
 	}
 	return cloneCommand(c.commands[0]), nil
+}
+
+// validateWorkingDir rejects a working directory that cannot be entered.
+// Empty means "use the program directory".
+func validateWorkingDir(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("工作目录不存在: %s", dir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("工作目录不是文件夹: %s", dir)
+	}
+	return nil
 }
 
 // renumberLocked rewrites Order fields to match slice order (caller holds the lock)
@@ -269,6 +290,9 @@ func (c *Config) DuplicateCommand(id string) (*Command, error) {
 func (c *Config) UpdateCommand(cmd Command) (*Command, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := validateWorkingDir(cmd.CWD); err != nil {
+		return nil, err
+	}
 	rollback := c.checkpointLocked()
 	for i := range c.commands {
 		if c.commands[i].ID == cmd.ID {

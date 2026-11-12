@@ -1,12 +1,23 @@
-import {GetArchivedCommands, AddCommand, UpdateCommand} from '../bindings/command-panel/app.js';
+import {GetArchivedCommands, AddCommand, UpdateCommand, CheckDirectory, PickDirectory} from '../bindings/command-panel/app.js';
 
 export function createCommandForm({getCommands, icon, showToast, onSaved}) {
     const commandForm = document.getElementById('command-form');
     const formTitle = document.getElementById('form-title');
     const formOverlay = document.getElementById('form-overlay');
+    const cwdInput = () => document.getElementById('cmd-cwd');
     let saving = false;
     function showFormModal() { formOverlay.style.display = 'flex'; }
     function hideFormModal() { formOverlay.style.display = 'none'; }
+
+    // Choose a working directory instead of typing its path
+    document.getElementById('btn-pick-dir')?.addEventListener('click', async () => {
+        try {
+            const dir = await PickDirectory();
+            if (dir) cwdInput().value = dir;
+        } catch (e) {
+            showToast('选择目录失败: ' + e, true);
+        }
+    });
     // Edit command
     function editCommand(id) {
         const cmd = getCommands().find(c => c.id === id);
@@ -115,6 +126,15 @@ export function createCommandForm({getCommands, icon, showToast, onSaved}) {
 
         if (!cmd.command) {
             showToast('命令不能为空', true);
+            return;
+        }
+
+        // Reject a missing/renamed working directory before the command is
+        // stored, instead of failing when it is started.
+        const cwdError = await CheckDirectory(cmd.cwd);
+        if (cwdError) {
+            showToast(cwdError, true);
+            cwdInput().focus();
             return;
         }
 
